@@ -13,7 +13,7 @@
 WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.0.0",
+  version: "1.0.1",
   requiredVersion: "0.0.2",
   description:
     "Danmu Fusion 是一个弹幕聚合播放模块，需要配套使用 Danmu API 服务。本模块通过专属 Forward API 获取经过聚合、版本匹配和处理后的弹幕数据，为 Emby/Jellyfin 提供稳定的弹幕播放体验。请先部署或连接 Danmu API 后再配置服务地址。",
@@ -121,8 +121,9 @@ WidgetMetadata = {
 };
 
 // ---------------------------------------------------------------------------
-const FUSION_UA = "DanmuFusion/1.0.0 (tzb360; Forward)";
-const CACHE_PREFIX = "tzb360.danmu.fusion.v1:";
+const FUSION_UA = "DanmuFusion/1.0.1 (tzb360; Forward)";
+// v2：身份解析与展示逻辑变更，避免沿用旧模块缓存
+const CACHE_PREFIX = "tzb360.danmu.fusion.v2:";
 
 function truthy(v, defaultVal) {
   if (v === undefined || v === null || v === "") return defaultVal;
@@ -132,8 +133,54 @@ function truthy(v, defaultVal) {
 }
 
 function toInt(v, fb) {
-  const n = parseInt(String(v == null ? "" : v).trim(), 10);
+  if (v === undefined || v === null || v === "") return fb;
+  // 支持 "E11" / "S04" / "第11集"
+  const s = String(v).trim();
+  const m =
+    s.match(/(?:^|[^\d])(?:E|EP|第)?\s*(\d{1,4})\s*(?:集|话|話)?$/i) ||
+    s.match(/(\d{1,4})/);
+  const n = m ? parseInt(m[1], 10) : parseInt(s, 10);
   return Number.isFinite(n) ? n : fb;
+}
+
+/** 取第一个有意义的字段值 */
+function firstPresent(obj, keys) {
+  const o = obj || {};
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (o[k] != null && String(o[k]).trim() !== "") return o[k];
+  }
+  return null;
+}
+
+/**
+ * 从合成 episodeId 反解集号。
+ * getDetailById 使用：episodeId = baseId + episode（episode 为 1-based）
+ */
+function decodeEpisodeFromSyntheticId(episodeId, animeIdHint) {
+  if (episodeId == null || episodeId === "") return null;
+  const idNum = Number(episodeId);
+  if (!Number.isFinite(idNum) || idNum <= 0) return null;
+
+  // 优先按已知 animeId 计算 base
+  if (animeIdHint != null) {
+    const baseId =
+      (Number(String(animeIdHint).replace(/\D/g, "").slice(-6) || "1") || 1) *
+      1000;
+    if (idNum > baseId) {
+      const ep = idNum - baseId;
+      if (ep >= 1 && ep <= 5000) return ep;
+    }
+  }
+
+  // 回退：id = N*1000 + ep 形式
+  const base = Math.floor(idNum / 1000) * 1000;
+  const ep = idNum - base;
+  if (ep >= 1 && ep <= 5000) return ep;
+
+  // 小整数直接当集号
+  if (idNum >= 1 && idNum <= 2000) return idNum;
+  return null;
 }
 
 function stripSlash(u) {
@@ -242,48 +289,289 @@ function isMovieType(type, season, episode) {
   return false;
 }
 
-function resolveIdentity(params) {
-  const p = params || {};
-  const rawType = String(p.type || "").toLowerCase();
-  const title = String(p.seriesName || p.title || p.name || p.keyword || "").trim();
-  const tmdbId =
-    p.tmdbId != null && String(p.tmdbId).trim() !== ""
-      ? String(p.tmdbId).trim()
-      : p.tmdb_id != null && String(p.tmdb_id).trim() !== ""
-        ? String(p.tmdb_id).trim()
-        : null;
-  const imdbId =
-    p.imdbId != null && String(p.imdbId).trim() !== ""
-      ? String(p.imdbId).trim()
-      : p.imdb_id != null && String(p.imdb_id).trim() !== ""
-        ? String(p.imdb_id).trim()
-        : null;
-  const year =
-    yearFrom(p.year) || yearFrom(p.airDate) || yearFrom(p.premiereDate) || null;
+/**
+ * 从 Forward/Emby 原始 params 解析 season/episode（1-based）。
+ * 多字段兜底，避免只读 p.episode 时拿不到或拿到陈旧值。
+ *
+ * 优先级（集）：
+ *   1) episode / episodeNumber / e / ep（Forward 文档约定，1-based）
+ *   2) IndexNumber（Emby 分集序号，通常 1-based；若为 0 则映射为 1）
+ *   3) 合成 episodeId / commentId 反解
+ *   4) 从 episodeTitle「第N集」提取
+ *
+ * 绝不做「全局 -1 / +1」特例；IndexNumber=0 仅表示首集。
+ */
+function resolveSeasonEpisode(p, isMovie) {
+  if (isMovie) {
+    return {
+      season: 1,
+      episode: 1,
+      seasonSource: "movie_fixed",
+      episodeSource: "movie_fixed",
+      raw: {}
+    };
+  }
 
-  const movie = isMovieType(rawType, p.season, p.episode);
-  let season;
-  let episode;
-  if (movie) {
-    // 电影固定 S1E1，绝不生成多集列表
+  const rawSnap = {
+    season: p.season,
+    seasonNumber: p.seasonNumber,
+    SeasonNumber: p.SeasonNumber,
+    ParentIndexNumber: p.ParentIndexNumber,
+    parentIndexNumber: p.parentIndexNumber,
+    s: p.s,
+    episode: p.episode,
+    episodeNumber: p.episodeNumber,
+    EpisodeNumber: p.EpisodeNumber,
+    IndexNumber: p.IndexNumber,
+    indexNumber: p.indexNumber,
+    e: p.e,
+    ep: p.ep,
+    episodeId: p.episodeId,
+    commentId: p.commentId,
+    episodeTitle: p.episodeTitle,
+    animeId: p.animeId
+  };
+
+  // 路径/文件名中的 SxxExx 是最可靠的「正在播放哪一集」信号（通用，非单剧特例）
+  const pathHint = String(
+    firstPresent(p, [
+      "Path",
+      "path",
+      "fileName",
+      "FileName",
+      "videoUrl",
+      "VideoUrl",
+      "link",
+      "MediaPath"
+    ]) || ""
+  );
+  const pathSE = pathHint.match(/[Ss](\d{1,2})[Ee](\d{1,3})/);
+  const titleSE = String(
+    firstPresent(p, ["episodeTitle", "EpisodeTitle", "name", "seriesName", "title"]) || ""
+  ).match(/[Ss](\d{1,2})[Ee](\d{1,3})/);
+
+  // —— season ——
+  let seasonSource = "default";
+  let season = toInt(
+    firstPresent(p, [
+      "season",
+      "seasonNumber",
+      "SeasonNumber",
+      "ParentIndexNumber",
+      "parentIndexNumber",
+      "s"
+    ]),
+    null
+  );
+  if (season != null) {
+    seasonSource =
+      p.season != null && String(p.season).trim() !== ""
+        ? "season"
+        : p.ParentIndexNumber != null
+          ? "ParentIndexNumber"
+          : "season_alt";
+  }
+  // ParentIndexNumber=0 在 Emby 有时表示 Specials，剧集正片季至少为 1
+  if (season === 0) {
     season = 1;
+    seasonSource = seasonSource + "+zero_as_1";
+  }
+  if (pathSE) {
+    const ps = parseInt(pathSE[1], 10);
+    if (Number.isFinite(ps) && ps >= 1) {
+      // 路径与字段冲突时以路径为准（避免 UI 字段滞后）
+      if (season == null || season !== ps) {
+        season = ps;
+        seasonSource = "path_SxxExx";
+      }
+    }
+  } else if (titleSE && (season == null || season < 1)) {
+    season = parseInt(titleSE[1], 10);
+    seasonSource = "title_SxxExx";
+  }
+  if (season == null || season < 1) {
+    season = 1;
+    seasonSource = "default_1";
+  }
+
+  // —— episode ——
+  let episodeSource = "default";
+  let episode = toInt(
+    firstPresent(p, [
+      "episode",
+      "episodeNumber",
+      "EpisodeNumber",
+      "e",
+      "ep"
+    ]),
+    null
+  );
+  if (episode != null) {
+    episodeSource =
+      p.episode != null && String(p.episode).trim() !== ""
+        ? "episode"
+        : p.episodeNumber != null
+          ? "episodeNumber"
+          : "episode_alt";
+  }
+
+  // IndexNumber：仅在上面没有明确 episode 时使用
+  if (episode == null) {
+    const idx = toInt(
+      firstPresent(p, ["IndexNumber", "indexNumber"]),
+      null
+    );
+    if (idx != null) {
+      // Emby IndexNumber 一般为 1-based；0 视为第 1 集
+      episode = idx === 0 ? 1 : idx;
+      episodeSource = idx === 0 ? "IndexNumber_zero_as_1" : "IndexNumber";
+    }
+  }
+
+  // 合成 episodeId / commentId 反解（getDetail 下发 baseId+ep）
+  if (episode == null || episode < 1) {
+    const sid = firstPresent(p, ["episodeId", "commentId", "comment_id"]);
+    const decoded = decodeEpisodeFromSyntheticId(sid, p.animeId || p.bangumiId);
+    if (decoded != null) {
+      episode = decoded;
+      episodeSource = "episodeId_decode";
+    }
+  }
+
+  // 从标题「第11集」提取
+  if (episode == null || episode < 1) {
+    const et = String(p.episodeTitle || p.name || "");
+    const m = et.match(/第\s*(\d{1,4})\s*[集话期話]/);
+    if (m) {
+      episode = parseInt(m[1], 10);
+      episodeSource = "episodeTitle";
+    }
+  }
+
+  // 路径 SxxExx：与字段冲突时优先路径（播放文件名是事实来源）
+  if (pathSE) {
+    const pe = parseInt(pathSE[2], 10);
+    if (Number.isFinite(pe) && pe >= 1 && pe !== episode) {
+      episode = pe;
+      episodeSource = "path_SxxExx";
+    } else if (episode == null || episode < 1) {
+      episode = pe;
+      episodeSource = "path_SxxExx";
+    }
+  } else if (titleSE && (episode == null || episode < 1)) {
+    episode = parseInt(titleSE[2], 10);
+    episodeSource = "title_SxxExx";
+  }
+
+  if (episode == null || episode < 1) {
     episode = 1;
-  } else {
-    season = Math.max(1, toInt(p.season, 1));
-    episode = Math.max(1, toInt(p.episode, 1));
+    episodeSource = "default_1";
+  }
+
+  // episodeId 反解：仅在 episode 仍为默认时覆盖
+  const sid2 = firstPresent(p, ["episodeId", "commentId"]);
+  const decoded2 = decodeEpisodeFromSyntheticId(sid2, p.animeId || p.bangumiId);
+  if (
+    decoded2 != null &&
+    decoded2 !== episode &&
+    (episodeSource === "default_1" || episodeSource === "default")
+  ) {
+    episode = decoded2;
+    episodeSource = "episodeId_decode_override";
+  }
+
+  // IndexNumber 与 episode 差 1 且路径未给出时：若 IndexNumber = episode+1，
+  // 更可能是 episode 字段滞后/0-based 误用 → 采用 IndexNumber（1-based 真值）
+  const idx2 = toInt(firstPresent(p, ["IndexNumber", "indexNumber"]), null);
+  if (
+    idx2 != null &&
+    idx2 >= 1 &&
+    episode >= 1 &&
+    idx2 === episode + 1 &&
+    episodeSource !== "path_SxxExx" &&
+    episodeSource !== "episodeId_decode" &&
+    episodeSource !== "episodeId_decode_override"
+  ) {
+    episode = idx2;
+    episodeSource = "IndexNumber_prefer_over_stale_episode";
   }
 
   return {
-    title,
+    season: Math.max(1, Math.floor(season)),
+    episode: Math.max(1, Math.floor(episode)),
+    seasonSource: seasonSource,
+    episodeSource: episodeSource,
+    raw: rawSnap
+  };
+}
+
+function resolveIdentity(params) {
+  const p = params || {};
+  const rawType = String(p.type || p.Type || "").toLowerCase();
+  const title = String(
+    firstPresent(p, [
+      "seriesName",
+      "SeriesName",
+      "title",
+      "name",
+      "keyword",
+      "mediaName"
+    ]) || ""
+  ).trim();
+  const tmdbIdRaw = firstPresent(p, [
+    "tmdbId",
+    "tmdb_id",
+    "TmdbId",
+    "ProviderIds.Tmdb"
+  ]);
+  const imdbIdRaw = firstPresent(p, ["imdbId", "imdb_id", "ImdbId"]);
+  const tmdbId =
+    tmdbIdRaw != null && String(tmdbIdRaw).trim() !== ""
+      ? String(tmdbIdRaw).trim()
+      : null;
+  const imdbId =
+    imdbIdRaw != null && String(imdbIdRaw).trim() !== ""
+      ? String(imdbIdRaw).trim()
+      : null;
+  const year =
+    yearFrom(p.year) ||
+    yearFrom(p.ProductionYear) ||
+    yearFrom(p.airDate) ||
+    yearFrom(p.premiereDate) ||
+    yearFrom(p.PremiereDate) ||
+    null;
+
+  // 先用原始 season/episode 判断电影，避免空值被默认成 1 后误判为剧集
+  const movie = isMovieType(
+    rawType,
+    firstPresent(p, ["season", "seasonNumber", "ParentIndexNumber"]),
+    firstPresent(p, ["episode", "episodeNumber", "IndexNumber"])
+  );
+
+  const se = resolveSeasonEpisode(p, movie);
+
+  return {
+    title: title,
     tmdb_id: tmdbId,
     imdb_id: imdbId,
-    year,
-    season,
-    episode,
+    year: year,
+    season: se.season,
+    episode: se.episode,
+    seasonSource: se.seasonSource,
+    episodeSource: se.episodeSource,
+    rawSeasonEpisode: se.raw,
     type: movie ? "movie" : rawType || "tv",
     isMovie: movie,
-    original_title: p.original_title || p.originalTitle || p.originalName || null,
-    region: p.region || null
+    original_title:
+      firstPresent(p, [
+        "original_title",
+        "originalTitle",
+        "originalName",
+        "OriginalTitle"
+      ]) || null,
+    region: firstPresent(p, ["region", "country", "Country"]) || null,
+    animeId: p.animeId != null ? p.animeId : null,
+    episodeId: firstPresent(p, ["episodeId", "commentId"]) || null
   };
 }
 
@@ -295,14 +583,66 @@ function buildQuery(identity, cfg, extra) {
   if (identity.year) q.year = identity.year;
   if (identity.original_title) q.original_title = identity.original_title;
   if (identity.region) q.region = identity.region;
-  q.season = String(identity.season);
-  q.episode = String(identity.episode);
+  if (identity.type) q.type = identity.isMovie ? "movie" : identity.type;
+  // 强制 1-based 整数字符串，避免 "10.0" / 空值
+  q.season = String(Math.max(1, Number(identity.season) || 1));
+  q.episode = String(Math.max(1, Number(identity.episode) || 1));
   q.color_to_white = cfg.colorToWhite ? "1" : "0";
   q.force_scroll = cfg.forceScroll ? "1" : "0";
   if (extra && extra.debug) q.debug = "1";
   if (extra && extra.force) q.force = "1";
   if (extra && extra.resolve_only) q.resolve_only = "1";
   return q;
+}
+
+/** 本地生成展示标题：SE 永远来自 identity，不被服务端陈旧 display 覆盖 */
+function buildLocalDisplay(identity, media) {
+  const title =
+    (media && (media.title || media.display_title)) ||
+    identity.title ||
+    "未知";
+  const regionLabel =
+    (media && (media.region_label || media.region)) || identity.region || null;
+  // 展示年：优先系列年/查询年，其次 matched season_year（仅作参考）
+  const year =
+    (media && media.year) ||
+    identity.year ||
+    (media && media.season_year) ||
+    null;
+  const segs = [];
+  if (regionLabel) segs.push(String(regionLabel));
+  if (year) segs.push(String(year));
+  const version = segs.length ? " (" + segs.join(" ") + ")" : "";
+  if (identity.isMovie) {
+    return String(title).replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "").trim() + version;
+  }
+  const s = String(Math.max(1, Number(identity.season) || 1)).padStart(2, "0");
+  const e = String(Math.max(1, Number(identity.episode) || 1)).padStart(2, "0");
+  // 去掉服务端 display 里可能已带的 SxxExx，再拼本地 SE
+  const base = String(title)
+    .replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "")
+    .replace(/\s*S\d{1,2}\s*$/i, "")
+    .trim();
+  // 若 title 已含 version 括号则不再重复
+  if (/\(\s*[^)]+\s*\)\s*$/.test(base)) {
+    return base + " S" + s + "E" + e;
+  }
+  return base + version + " S" + s + "E" + e;
+}
+
+function logOutboundApi(cfg, identity, queryObj, tag) {
+  // 始终可在 debug 打开时看到完整发送参数；关键字段固定打印结构
+  safeLog(cfg.debug || true, tag || "发送 Forward API", {
+    title: identity.title,
+    season: identity.season,
+    episode: identity.episode,
+    seasonSource: identity.seasonSource,
+    episodeSource: identity.episodeSource,
+    tmdb_id: identity.tmdb_id,
+    year: identity.year,
+    type: identity.type,
+    query: queryObj
+  });
 }
 
 function qs(obj) {
@@ -480,7 +820,28 @@ function stableAnimeId(identity) {
 async function searchDanmu(params) {
   const cfg = resolveConfig(params);
   const identity = resolveIdentity(params);
-  safeLog(cfg.debug, "searchDanmu.params", identity);
+  // 原始 params 关键字段 + 解析结果（定位 SE 偏移）
+  safeLog(true, "searchDanmu.raw_params", {
+    season: params && params.season,
+    episode: params && params.episode,
+    IndexNumber: params && params.IndexNumber,
+    ParentIndexNumber: params && params.ParentIndexNumber,
+    episodeNumber: params && params.episodeNumber,
+    episodeId: params && params.episodeId,
+    seriesName: params && params.seriesName,
+    title: params && params.title,
+    tmdbId: params && (params.tmdbId || params.tmdb_id),
+    type: params && params.type
+  });
+  safeLog(true, "searchDanmu.resolved", {
+    title: identity.title,
+    season: identity.season,
+    episode: identity.episode,
+    seasonSource: identity.seasonSource,
+    episodeSource: identity.episodeSource,
+    tmdb_id: identity.tmdb_id,
+    year: identity.year
+  });
 
   if (!identity.title && !identity.tmdb_id && !identity.imdb_id) {
     return { animes: [] };
@@ -489,47 +850,38 @@ async function searchDanmu(params) {
   let media = null;
   let displayTitle = null;
   try {
-    const url = forwardDanmakuUrl(
-      cfg,
-      buildQuery(identity, cfg, { debug: cfg.debug, resolve_only: true })
-    );
+    const queryObj = buildQuery(identity, cfg, {
+      debug: cfg.debug,
+      resolve_only: true
+    });
+    logOutboundApi(cfg, identity, queryObj, "发送 Forward API(resolve)");
+    const url = forwardDanmakuUrl(cfg, queryObj);
     const raw = await httpGetRetry(
       url,
       Object.assign({}, cfg, { timeoutMs: Math.min(cfg.timeoutMs, 45000), retry: 0 }),
       "resolve"
     );
     media = raw && raw.media ? raw.media : null;
-    if (media && media.display) {
-      displayTitle = String(media.display);
-      // 电影：去掉服务端可能带的 Sxx/Exx 展示
-      if (identity.isMovie) {
-        displayTitle = displayTitle
-          .replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "")
-          .replace(/\s*S\d{1,2}\s*$/i, "")
-          .trim();
-      }
-    } else if (media && media.display_title) {
-      displayTitle = String(media.display_title);
-      if (!identity.isMovie) {
-        displayTitle =
-          displayTitle + " S" + String(identity.season).padStart(2, "0");
-      }
-    }
+    // 展示 SE 必须以本地 identity 为准，防止服务端/缓存陈旧 E 号
+    displayTitle = buildLocalDisplay(identity, media);
     if (raw && raw.meta && raw.meta.source_count != null) {
       safeLog(cfg.debug, "resolve.source_count", raw.meta.source_count);
+    }
+    if (media) {
+      safeLog(true, "resolve.media_se", {
+        media_season: media.season,
+        media_episode: media.episode,
+        media_display: media.display,
+        local_season: identity.season,
+        local_episode: identity.episode
+      });
     }
   } catch (e) {
     safeLog(cfg.debug, "resolve.fail", String(e && e.message ? e.message : e));
   }
 
   if (!displayTitle) {
-    displayTitle =
-      (identity.title || "未知") +
-      (identity.year ? " (" + identity.year + ")" : "");
-    if (!identity.isMovie) {
-      displayTitle =
-        displayTitle + " S" + String(identity.season).padStart(2, "0");
-    }
+    displayTitle = buildLocalDisplay(identity, null);
   }
 
   const animeId = stableAnimeId(identity);
@@ -549,7 +901,7 @@ async function searchDanmu(params) {
             : identity.year
               ? identity.year + "-01-01"
               : "",
-        // 电影必须为 1，禁止多集
+        // 电影必须为 1；剧集用当前集号作为上界（不伪造更多集）
         episodeCount: identity.isMovie ? 1 : Math.max(identity.episode, 1),
         rating: 0,
         isFavorited: false
@@ -571,6 +923,13 @@ async function getDetailById(params) {
     (Number(String(animeId).replace(/\D/g, "").slice(-6) || "1") || 1) * 1000;
   const air = identity.year ? identity.year + "-01-01" : "";
 
+  safeLog(true, "getDetail.resolved", {
+    season: identity.season,
+    episode: identity.episode,
+    episodeSource: identity.episodeSource,
+    animeId: animeId
+  });
+
   if (identity.isMovie) {
     return [
       {
@@ -584,6 +943,7 @@ async function getDetailById(params) {
   }
 
   // 剧集：仅当前集，避免伪造第 N+1、N+2 集
+  // episodeId = baseId + episode（1-based），getComments 可反解
   const ep = identity.episode;
   return [
     {
@@ -599,7 +959,22 @@ async function getDetailById(params) {
 async function getCommentsById(params) {
   const cfg = resolveConfig(params);
   const identity = resolveIdentity(params);
-  safeLog(cfg.debug, "getComments.params", identity);
+  safeLog(true, "getComments.raw_params", {
+    season: params && params.season,
+    episode: params && params.episode,
+    IndexNumber: params && params.IndexNumber,
+    episodeId: params && params.episodeId,
+    commentId: params && params.commentId,
+    episodeNumber: params && params.episodeNumber
+  });
+  safeLog(true, "getComments.resolved", {
+    title: identity.title,
+    season: identity.season,
+    episode: identity.episode,
+    seasonSource: identity.seasonSource,
+    episodeSource: identity.episodeSource,
+    tmdb_id: identity.tmdb_id
+  });
 
   if (!identity.title && !identity.tmdb_id && !identity.imdb_id) {
     return { count: 0, comments: [] };
@@ -609,24 +984,39 @@ async function getCommentsById(params) {
   if (cfg.cacheEnabled) {
     const hit = cacheGet(ck);
     if (hit && hit.comments && hit.comments.length) {
-      safeLog(cfg.debug, "module_cache_hit", { key: ck, count: hit.count });
+      // 防止旧缓存被错误复用：校验缓存 key 含正确 SE
+      safeLog(true, "module_cache_hit", {
+        key: ck,
+        count: hit.count,
+        season: identity.season,
+        episode: identity.episode
+      });
       return hit;
     }
   }
 
-  const url = forwardDanmakuUrl(cfg, buildQuery(identity, cfg, { debug: cfg.debug }));
+  const queryObj = buildQuery(identity, cfg, { debug: cfg.debug });
+  logOutboundApi(cfg, identity, queryObj, "发送 Forward API(danmaku)");
+  const url = forwardDanmakuUrl(cfg, queryObj);
 
   try {
     const raw = await httpGetRetry(url, cfg, "forward.danmaku");
     const adapted = adaptComments(raw);
-    if (raw && raw.media) adapted.media = raw.media;
+    // media 展示 SE 以本地 identity 覆盖，避免服务端陈旧 E 号进 UI
+    if (raw && raw.media) {
+      adapted.media = Object.assign({}, raw.media, {
+        season: identity.season,
+        episode: identity.episode,
+        display: buildLocalDisplay(identity, raw.media)
+      });
+    }
 
     // 来源明细仅 debug 日志，不写入播放器可见字段污染 UI
     const detail =
       (raw && raw.sources_detail) ||
       (raw && raw.meta && (raw.meta.sources_detail || raw.meta.sources)) ||
       [];
-    logSourcesDetail(cfg, raw && raw.media, detail, adapted.count);
+    logSourcesDetail(cfg, adapted.media, detail, adapted.count);
 
     if (cfg.cacheEnabled && adapted.count > 0) cacheSet(ck, adapted);
     return adapted;

@@ -78,8 +78,9 @@ export function parseForwardQuery(urlOrObject = {}) {
     year: yearMatch ? yearMatch[0] : (yearRaw != null ? String(yearRaw) : null),
     country: get(['country', 'origin_country', 'originCountry'], null),
     network: get(['network', 'networks', 'studio'], null),
-    season: get(['season', 's'], 1),
-    episode: get(['episode', 'e', 'ep'], 1),
+    // 1-based；兼容 Emby/Forward 多种字段名（不做全局 ±1）
+    season: get(['season', 's', 'seasonNumber', 'SeasonNumber', 'ParentIndexNumber'], 1),
+    episode: get(['episode', 'e', 'ep', 'episodeNumber', 'EpisodeNumber', 'IndexNumber'], 1),
     episode_id: get(['episode_id', 'comment_id', 'commentId', 'episodeId'], null),
     anime_id: get(['anime_id', 'animeId'], null),
     type: get(['type'], 'tv'),
@@ -643,6 +644,14 @@ export async function getForwardDanmaku(queryInput = {}) {
   const season = toSeasonNum(query.season);
   const episode = toEpisodeNum(query.episode);
   const titleHint = query.title || query.tmdb_id || query.movie_id || query.imdb_id || '';
+
+  // 完整接收日志：定位 SE 是否在传输中被改写
+  log(
+    'info',
+    `[ForwardAdapter] recv title="${query.title || ''}" season=${season} episode=${episode} ` +
+      `raw_season=${query.season} raw_episode=${query.episode} ` +
+      `tmdb=${query.tmdb_id || '-'} type=${query.type || '-'} year=${query.year || '-'}`
+  );
 
   if (!titleHint && !query.episode_id && !query.anime_id) {
     const err = new TypeError('require title, tmdb_id, movie_id, imdb_id or episode_id');

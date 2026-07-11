@@ -147,14 +147,23 @@ export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, 
     if (!links.length) continue;
 
     const sourceName = anime.source || 'unknown';
-    // episodeNumber 1-based
-    let link = links[episodeNumber - 1];
-    // 尝试从标题匹配「第N集」
+    // episodeNumber 严格 1-based
+    // 优先按标题/name 中的集号匹配，避免 links 数组顺序与集号不一致时错位
+    let link = links.find((l) => {
+      const title = String(l.title || l.name || '');
+      const m =
+        title.match(/第\s*(\d{1,4})\s*[集话期話]/) ||
+        title.match(/(?:^|[^\d])E(?:P)?(\d{1,4})(?:[^\d]|$)/i) ||
+        title.match(/(?:^|[^\d])(\d{1,4})(?:[^\d]|$)/);
+      return m && Number(m[1]) === Number(episodeNumber);
+    });
+    // 回退：name 字段为纯数字集号
     if (!link) {
-      link = links.find(l => {
-        const m = String(l.title || '').match(/(\d+)/);
-        return m && Number(m[1]) === episodeNumber;
-      });
+      link = links.find((l) => Number(l.name) === Number(episodeNumber));
+    }
+    // 最后回退：按 1-based 下标
+    if (!link && episodeNumber >= 1 && episodeNumber <= links.length) {
+      link = links[episodeNumber - 1];
     }
     if (!link?.url) continue;
 
