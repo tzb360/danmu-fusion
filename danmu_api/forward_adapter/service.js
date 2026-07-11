@@ -593,7 +593,13 @@ async function resolveMultiSources(query) {
     `[ForwardAdapter] identity filter ${contentKept.length} -> ${filtered.length}; display="${media.display}" region=${media.region}`
   );
 
-  const sources = collectEpisodeSourcesFromAnimes(filtered, episode);
+  // 严格按输入 episode 精确匹配分集链接；禁止 nearest 回退
+  const episodeMatchDebug = {};
+  const sources = collectEpisodeSourcesFromAnimes(filtered, episode, {}, {
+    strict: true,
+    debugOut: episodeMatchDebug
+  });
+
   // 平台去重，最多 8 源；附带版本元数据
   const byPlat = new Map();
   for (const s of sources) {
@@ -619,10 +625,56 @@ async function resolveMultiSources(query) {
     }
   }
   const deduped = [...byPlat.values()].slice(0, 8);
-  log('info', `[ForwardAdapter] discovered sources=${deduped.length} [${deduped.map(s => `${s.source}:${s.fileName}`).join(' | ')}]`);
+
+  // 校验：每个源的 matched_episode 必须等于输入 episode
+  for (const s of deduped) {
+    if (s.matched_episode != null && Number(s.matched_episode) !== Number(episode)) {
+      log(
+        'error',
+        `[ForwardAdapter] EPISODE_MISMATCH reject source=${s.source} ` +
+          `want=E${episode} got=E${s.matched_episode} title=${s.episode_title}`
+      );
+    }
+  }
+  const strictSources = deduped.filter(
+    (s) => s.matched_episode == null || Number(s.matched_episode) === Number(episode)
+  );
+
+  log(
+    'info',
+    `[ForwardAdapter] episode_match input=S${season}E${episode} ` +
+      `sources=${strictSources.length} [${strictSources.map((s) => `${s.source}:${s.episode_title || s.fileName}`).join(' | ')}]`
+  );
+  log(
+    'info',
+    `[ForwardAdapter] episode_match_debug ${JSON.stringify({
+      input_episode: episode,
+      policy: episodeMatchDebug.policy,
+      selected: episodeMatchDebug.selected_sources,
+      per_anime: (episodeMatchDebug.anime_matches || []).map((a) => ({
+        title: a.anime_title,
+        chosen: a.chosen,
+        top: (a.candidates || []).slice(0, 8)
+      }))
+    })}`
+  );
+
+  // 挂到 media 便于 debug 响应
+  media.episode_match = {
+    input_season: season,
+    input_episode: episode,
+    policy: 'strict_exact_only',
+    selected_sources: strictSources.map((s) => ({
+      source: s.source,
+      episode_title: s.episode_title,
+      matched_episode: s.matched_episode,
+      match_reason: s.match_reason
+    })),
+    debug: episodeMatchDebug
+  };
 
   return {
-    sources: deduped,
+    sources: strictSources,
     animes: filtered,
     allCandidates: detailed,
     keyword,
@@ -631,7 +683,8 @@ async function resolveMultiSources(query) {
     searchMs,
     animeCount: animes.length,
     media,
-    filterSteps
+    filterSteps,
+    episodeMatchDebug
   };
 }
 

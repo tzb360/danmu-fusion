@@ -54,6 +54,35 @@ test('collectEpisodeSourcesFromAnimes gathers multi-platform links', () => {
   assert.ok(sources.length >= 3);
   const names = sources.map(s => s.source);
   assert.ok(names.includes('bilibili') || names.includes('tencent') || names.includes('dandan'));
+  assert.ok(sources.every((s) => s.matched_episode === 1));
+});
+
+test('strict episode match never picks nearest episode', async () => {
+  const { selectExactEpisodeLink, collectEpisodeSourcesFromAnimes: collect } = await import(
+    './aggregation/episode-service.js'
+  );
+  const links = [
+    { name: '10', title: '【renren】 第10集', url: '1061-10' },
+    { name: '11', title: '【renren】 第11集', url: '1061-11' },
+    { name: '12', title: '【renren】 第12集', url: '1061-12' }
+  ];
+  const sel12 = selectExactEpisodeLink(links, 12);
+  assert.equal(sel12.chosen?.numbers?.includes(12), true);
+  assert.equal(sel12.link?.url, '1061-12');
+  const sel11 = selectExactEpisodeLink(links, 11);
+  assert.equal(sel11.link?.url, '1061-11');
+  // 无 E13：不得回退到 E12
+  const sel13 = selectExactEpisodeLink(links, 13);
+  assert.equal(sel13.link, null);
+  assert.equal(sel13.policy, 'strict_exact_only');
+
+  const animes = [{ animeTitle: '无耻之徒(美版) 第四季(2014)', source: 'renren', links }];
+  const s12 = collect(animes, 12, {}, { strict: true });
+  assert.equal(s12.length, 1);
+  assert.equal(s12[0].url, '1061-12');
+  assert.equal(s12[0].matched_episode, 12);
+  const s13 = collect(animes, 13, {}, { strict: true });
+  assert.equal(s13.length, 0);
 });
 
 test('episode cache save/load/list/delete works on disk', async () => {

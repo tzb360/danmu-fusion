@@ -919,13 +919,20 @@ export default class RenrenSource extends BaseSource {
       const epSid = String(ep.sid || "").trim();
       if (!epSid) return;
 
-      const showTitle = ep.title ? String(ep.title) : `第${String(ep.episodeNo || idx + 1).padStart(2, "0")}集`;
+      // episodeNo 规范为 1-based；0 或缺失时用 idx+1（禁止 0-based 泄漏到匹配层）
+      let epNo = Number(ep.episodeNo);
+      if (!Number.isFinite(epNo) || epNo < 1) epNo = idx + 1;
+
+      const rawTitle = ep.title ? String(ep.title).trim() : '';
+      const showTitle = /第\s*\d+\s*[集话期話]/.test(rawTitle)
+        ? rawTitle
+        : `第${String(epNo).padStart(2, '0')}集${rawTitle ? ' ' + rawTitle : ''}`.trim();
 
       // 构建复合ID (SeriesId-EpisodeId)
       // TV弹幕接口需要EpisodeId，搜索可能需要SeriesId，保留此结构确保上下文完整
       const compositeId = `${seriesId}-${epSid}`;
 
-      episodes.push({ sid: compositeId, order: ep.episodeNo || idx + 1, title: showTitle });
+      episodes.push({ sid: compositeId, order: epNo, title: showTitle });
     });
 
     const resultEpisodes = episodes.map(e => ({
@@ -1032,10 +1039,17 @@ export default class RenrenSource extends BaseSource {
 
             let links = [];
             for (const ep of eps) {
+              // name = 1-based 集号；title 强制带「第N集」，供严格 episode 匹配
+              const epNo = Number(ep.episodeIndex) > 0 ? Number(ep.episodeIndex) : links.length + 1;
+              const rawTitle = String(ep.title || '').trim();
+              const hasEpLabel = /第\s*\d+\s*[集话期話]/.test(rawTitle) || /E(?:P)?\d+/i.test(rawTitle);
+              const title = hasEpLabel
+                ? `【${ep.provider}】 ${rawTitle}`
+                : `【${ep.provider}】 第${epNo}集${rawTitle ? ' ' + rawTitle : ''}`;
               links.push({
-                "name": ep.episodeIndex.toString(),
+                "name": String(epNo),
                 "url": ep.episodeId,
-                "title": `【${ep.provider}】 ${ep.title}`
+                "title": title
               });
             }
 

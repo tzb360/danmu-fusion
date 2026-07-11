@@ -134,12 +134,125 @@ function parseCompositeUrl(url) {
 }
 
 /**
- * 从已有 anime 列表中收集指定集的多平台链接
+ * 从 link 标题/name 解析集号（仅严格模式，不猜“最近集”）
+ * @returns {{ numbers: number[], reasons: string[] }}
  */
-export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, sourceWeights = {}) {
+export function parseLinkEpisodeNumbers(link = {}, index = 0) {
+  const title = String(link.title || '');
+  const name = String(link.name ?? '');
+  const numbers = [];
+  const reasons = [];
+
+  const m1 = title.match(/第\s*(\d{1,4})\s*[集话期話]/);
+  if (m1) {
+    numbers.push(Number(m1[1]));
+    reasons.push('title_第N集');
+  }
+  const m2 = title.match(/(?:^|[^A-Za-z0-9])E(?:P)?(\d{1,4})(?:[^A-Za-z0-9]|$)/i);
+  if (m2) {
+    numbers.push(Number(m2[1]));
+    reasons.push('title_EN');
+  }
+  // name 为纯数字集号（renren: episodeIndex）
+  if (/^\d{1,4}$/.test(name.trim())) {
+    numbers.push(Number(name.trim()));
+    reasons.push('name_digits');
+  }
+  // 注意：禁止用标题里任意数字（会把年份 2014 当成集号）
+
+  return {
+    numbers: [...new Set(numbers.filter((n) => Number.isFinite(n) && n > 0))],
+    reasons,
+    index,
+    title: title.slice(0, 80),
+    name
+  };
+}
+
+/**
+ * 在 links 中严格选择 targetEpisode（1-based）
+ * 禁止 nearest / 向前向后兜底；无精确匹配则 null
+ */
+export function selectExactEpisodeLink(links = [], targetEpisode = 1) {
+  const target = Number(targetEpisode);
+  const candidates = [];
+  for (let i = 0; i < (links || []).length; i++) {
+    const link = links[i];
+    const parsed = parseLinkEpisodeNumbers(link, i);
+    const exact = parsed.numbers.includes(target);
+    // 仅精确匹配得分 100；其余 0（明确禁止 nearest）
+    let score = 0;
+    let reason = 'no_exact_match';
+    if (exact) {
+      score = 100;
+      reason = parsed.reasons.join('+') || 'exact';
+    }
+    candidates.push({
+      index: i,
+      score,
+      reason,
+      numbers: parsed.numbers,
+      title: parsed.title,
+      name: parsed.name,
+      url: link?.url || null,
+      link
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score || a.index - b.index);
+  const best = candidates.find((c) => c.score >= 100) || null;
+
+  log(
+    'info',
+    `[EpisodeMatch] input_episode=${target} candidates=${candidates.length} ` +
+      `chosen=${best ? `idx=${best.index} nums=[${best.numbers}] reason=${best.reason}` : 'NONE'}`
+  );
+  for (const c of candidates.slice(0, 30)) {
+    log(
+      'info',
+      `[EpisodeMatch] cand S?E? idx=${c.index} score=${c.score} nums=[${c.numbers.join(',')}] ` +
+        `reason=${c.reason} title="${c.title}"`
+    );
+  }
+
+  return {
+    target,
+    link: best?.link || null,
+    chosen: best
+      ? {
+          index: best.index,
+          score: best.score,
+          reason: best.reason,
+          numbers: best.numbers,
+          title: best.title,
+          name: best.name
+        }
+      : null,
+    candidates: candidates.map((c) => ({
+      index: c.index,
+      score: c.score,
+      reason: c.reason,
+      numbers: c.numbers,
+      title: c.title,
+      name: c.name
+    })),
+    policy: 'strict_exact_only'
+  };
+}
+
+/**
+ * 从已有 anime 列表中收集指定集的多平台链接
+ * @param {object} [options]
+ * @param {boolean} [options.strict=true] 严格集号匹配（默认 true，禁止 nearest）
+ * @param {object} [options.debugOut] 若传入对象，写入 episode 匹配调试信息
+ */
+export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, sourceWeights = {}, options = {}) {
   const order = globals.sourceOrderArr || [];
   const found = [];
   const seen = new Set();
+  const strict = options.strict !== false;
+  const target = Math.max(1, Number(episodeNumber) || 1);
+  const matchDebug = [];
 
   for (const anime of animes) {
     if (!anime) continue;
@@ -147,25 +260,30 @@ export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, 
     if (!links.length) continue;
 
     const sourceName = anime.source || 'unknown';
-    // episodeNumber 严格 1-based
-    // 优先按标题/name 中的集号匹配，避免 links 数组顺序与集号不一致时错位
-    let link = links.find((l) => {
-      const title = String(l.title || l.name || '');
-      const m =
-        title.match(/第\s*(\d{1,4})\s*[集话期話]/) ||
-        title.match(/(?:^|[^\d])E(?:P)?(\d{1,4})(?:[^\d]|$)/i) ||
-        title.match(/(?:^|[^\d])(\d{1,4})(?:[^\d]|$)/);
-      return m && Number(m[1]) === Number(episodeNumber);
+    const selection = selectExactEpisodeLink(links, target);
+    matchDebug.push({
+      anime_title: anime.animeTitle || '',
+      source: sourceName,
+      target_episode: target,
+      chosen: selection.chosen,
+      candidates: selection.candidates,
+      policy: selection.policy
     });
-    // 回退：name 字段为纯数字集号
-    if (!link) {
-      link = links.find((l) => Number(l.name) === Number(episodeNumber));
+
+    let link = selection.link;
+    // 非严格模式才允许 1-based 下标回退（Forward 强制 strict）
+    if (!link && !strict && target >= 1 && target <= links.length) {
+      link = links[target - 1];
+      log('warn', `[EpisodeMatch] non-strict index fallback anime=${anime.animeTitle} ep=${target}`);
     }
-    // 最后回退：按 1-based 下标
-    if (!link && episodeNumber >= 1 && episodeNumber <= links.length) {
-      link = links[episodeNumber - 1];
+    if (!link?.url) {
+      log(
+        'info',
+        `[EpisodeMatch] exact miss anime="${anime.animeTitle}" want=E${target} ` +
+          `links=${links.length} (no nearest fallback)`
+      );
+      continue;
     }
-    if (!link?.url) continue;
 
     const platform = inferPlatformFromUrl(link.url, link.title || sourceName) || sourceName;
     const parts = parseCompositeUrl(link.url);
@@ -182,7 +300,9 @@ export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, 
           anime_title: anime.animeTitle || '',
           episode_title: link.title || '',
           weight: resolveSourceWeight(src, order, sourceWeights),
-          episode_id: link.id
+          episode_id: link.id,
+          matched_episode: target,
+          match_reason: selection.chosen?.reason || 'exact'
         });
       }
     } else {
@@ -196,13 +316,26 @@ export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, 
         anime_title: anime.animeTitle || '',
         episode_title: link.title || '',
         weight: resolveSourceWeight(platform, order, sourceWeights),
-        episode_id: link.id
+        episode_id: link.id,
+        matched_episode: target,
+        match_reason: selection.chosen?.reason || 'exact'
       });
     }
   }
 
   // 高权重优先
   found.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  if (options.debugOut && typeof options.debugOut === 'object') {
+    options.debugOut.input_episode = target;
+    options.debugOut.policy = 'strict_exact_only';
+    options.debugOut.anime_matches = matchDebug;
+    options.debugOut.selected_sources = found.map((s) => ({
+      source: s.source,
+      episode_title: s.episode_title,
+      matched_episode: s.matched_episode,
+      match_reason: s.match_reason
+    }));
+  }
   return found;
 }
 
@@ -541,7 +674,9 @@ export async function aggregateEpisode(query = {}) {
       original_title: s.original_title,
       season: s.season ?? identity.season,
       episode: s.episode ?? identity.episode,
-      url: s.url
+      url: s.url,
+      matched_episode: s.matched_episode ?? identity.episode,
+      match_reason: s.match_reason || null
     })))
   );
 
@@ -770,6 +905,8 @@ function summarizeSourceMeta(fr, identity) {
     from_cache: Boolean(fr.from_cache),
     matched_title: fr.anime_title || null,
     episode_title: fr.episode_title || null,
+    matched_episode: fr.matched_episode ?? identity.episode ?? null,
+    match_reason: fr.match_reason || null,
     original_title: fr.original_title || identity.original_title || null,
     region: fr.region || identity.region || null,
     region_label: identity.region_label || null,
