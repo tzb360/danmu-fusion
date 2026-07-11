@@ -22,3 +22,4 @@ config/.env.backup.*
 # dependencies / build
 node_modules/
 dist/
+ForwardWidgets-master/
