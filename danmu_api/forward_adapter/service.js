@@ -1,0 +1,866 @@
+/**
+ * Forward 适配服务 — 自动化入口
+ *
+ * Forward 请求参数 (title/season/episode/tmdb/imdb/year)
+ *   → 原有 searchAnime 识别剧集
+ *   → 收集该集所有平台链接（不依赖后台手工聚合）
+ *   → 多源抓取 + 聚合清洗 Pipeline
+ *   → 自动缓存
+ *   → 返回纯净弹幕（无来源标签）
+ */
+import { log } from '../utils/log-util.js';
+import { globals } from '../configs/globals.js';
+import { searchAnime, getBangumi, getComment } from '../apis/dandan-api.js';
+import { tryLoadEpisodeCache, autoSaveEpisodeCache } from '../aggregation/request-pipeline.js';
+import {
+  aggregateEpisode,
+  collectEpisodeSourcesFromAnimes
+} from '../aggregation/episode-service.js';
+import {
+  buildEpisodeIdentity,
+  inferRegionFromTitle,
+  normalizeRegion,
+  regionLabel,
+  extractYearValue,
+  buildSourceFileLabel,
+  formatVersionDisplay
+} from '../aggregation/episode-identity.js';
+import { filterContentCandidates } from '../aggregation/content-filter.js';
+import { extractSeasonNumberFromAnimeTitle } from '../utils/common-util.js';
+import {
+  buildForwardDanmakuPayload,
+  toPlayerXml,
+  toPlayerAss,
+  sanitizePlayerTitle,
+  sanitizeEpisodeList,
+  sanitizeAnimeList,
+  toPlayerComments,
+  applyPlayerPresentation
+} from './format.js';
+
+export function parseForwardQuery(urlOrObject = {}) {
+  const sp = typeof urlOrObject.searchParams?.get === 'function'
+    ? urlOrObject.searchParams
+    : null;
+
+  const get = (keys, fallback = null) => {
+    if (sp) {
+      for (const k of keys) {
+        const v = sp.get(k);
+        if (v != null && String(v).trim() !== '') return v;
+      }
+      return fallback;
+    }
+    for (const k of keys) {
+      if (urlOrObject[k] != null && String(urlOrObject[k]).trim() !== '') {
+        return urlOrObject[k];
+      }
+    }
+    return fallback;
+  };
+
+  const yearRaw = get(['year', 'airDate', 'premiereDate'], null);
+  const yearMatch = yearRaw != null ? String(yearRaw).match(/(19|20)\d{2}/) : null;
+
+  const asBool = (v) => {
+    if (v === true || v === 1) return true;
+    const s = String(v == null ? '' : v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+  };
+
+  return {
+    title: get(['title', 'name', 'seriesName', 'keyword'], '') || '',
+    original_title: get(['original_title', 'originalTitle', 'original_name'], null),
+    tmdb_id: get(['tmdb_id', 'tmdbid', 'tmdbId'], null),
+    imdb_id: get(['imdb_id', 'imdbid', 'imdbId'], null),
+    tvdb_id: get(['tvdb_id', 'tvdbid', 'tvdbId'], null),
+    movie_id: get(['movie_id', 'movieId', 'media_id', 'mediaId'], null),
+    year: yearMatch ? yearMatch[0] : (yearRaw != null ? String(yearRaw) : null),
+    country: get(['country', 'origin_country', 'originCountry'], null),
+    network: get(['network', 'networks', 'studio'], null),
+    season: get(['season', 's'], 1),
+    episode: get(['episode', 'e', 'ep'], 1),
+    episode_id: get(['episode_id', 'comment_id', 'commentId', 'episodeId'], null),
+    anime_id: get(['anime_id', 'animeId'], null),
+    type: get(['type'], 'tv'),
+    force: asBool(get(['force', 'refresh'], 'false')),
+    format: String(get(['format'], 'json')).toLowerCase(),
+    // debug=1：响应附带 sources/stats + 完整 matched metadata
+    debug: asBool(get(['debug'], 'false')),
+    // resolve_only=1：只做剧集识别与 metadata，不抓弹幕（供 Forward 显示层）
+    resolve_only: asBool(get(['resolve_only', 'meta_only'], 'false')),
+    // Forward 播放呈现：默认开启颜色转白 / 统一滚动；color_to_white=0 / force_scroll=0 可关
+    color_to_white: get(['color_to_white', 'colorToWhite'], null) == null
+      ? true
+      : asBool(get(['color_to_white', 'colorToWhite'], '1')),
+    force_scroll: get(['force_scroll', 'forceScroll', 'scroll_top'], null) == null
+      ? true
+      : asBool(get(['force_scroll', 'forceScroll', 'scroll_top'], '1')),
+    region: get(['region', 'country_code'], null)
+  };
+}
+
+function toSeasonNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+}
+
+function toEpisodeNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+}
+
+function titleLooksMatch(animeTitle, queryTitle) {
+  if (!animeTitle || !queryTitle) return true;
+  const a = String(animeTitle).toLowerCase().replace(/\s/g, '');
+  const q = String(queryTitle).toLowerCase().replace(/\s/g, '');
+  return a.includes(q) || q.includes(a.slice(0, Math.min(4, a.length)));
+}
+
+function animeYear(anime) {
+  const d = String(anime?.startDate || '');
+  const m1 = d.match(/(19|20)\d{2}/);
+  if (m1) return m1[0];
+  const t = String(anime?.animeTitle || '');
+  const m2 = t.match(/\(((?:19|20)\d{2})\)/);
+  return m2 ? m2[1] : null;
+}
+
+function animeEpisodeCapacity(anime) {
+  if (Array.isArray(anime?.links) && anime.links.length) return anime.links.length;
+  const n = Number(anime?.episodeCount);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * 用结构化条件筛选候选（外部 ID / 季号 / 集数容量 / 地区 / 系列年）
+ * 地区来自源条目自身标注（美版/英版/US/UK），用于拆分缓存，不是「标题瞎猜」
+ */
+export function filterAnimesByIdentity(animes, {
+  season, episode, year, tmdb_id, imdb_id, tvdb_id, region, allAnimes = null
+} = {}) {
+  const steps = [];
+  let list = Array.isArray(animes) ? [...animes] : [];
+  const pool = Array.isArray(allAnimes) && allAnimes.length ? allAnimes : list;
+  steps.push({ step: 'input', count: list.length });
+
+  if (tmdb_id) {
+    const id = String(tmdb_id);
+    const hit = list.filter(a => String(a.tmdb_id || a.tmdbId || a.tmdbid || '') === id);
+    if (hit.length) {
+      list = hit;
+      steps.push({ step: 'tmdb_id', count: list.length, tmdb_id: id });
+    } else {
+      steps.push({ step: 'tmdb_id', count: list.length, note: 'no anime carries tmdb_id; keep all' });
+    }
+  }
+  if (imdb_id) {
+    const id = String(imdb_id);
+    const hit = list.filter(a => String(a.imdb_id || a.imdbId || a.imdbid || '') === id);
+    if (hit.length) {
+      list = hit;
+      steps.push({ step: 'imdb_id', count: list.length, imdb_id: id });
+    } else {
+      steps.push({ step: 'imdb_id', count: list.length, note: 'no anime carries imdb_id; keep all' });
+    }
+  }
+  if (tvdb_id) {
+    const id = String(tvdb_id);
+    const hit = list.filter(a => String(a.tvdb_id || a.tvdbId || '') === id);
+    if (hit.length) {
+      list = hit;
+      steps.push({ step: 'tvdb_id', count: list.length });
+    }
+  }
+
+  // 严格季号：有季号的必须等于目标季；无季号合集仅在无严格命中时保留
+  if (season != null) {
+    const s = toSeasonNum(season);
+    const strict = list.filter(a => {
+      const extracted = extractSeasonNumberFromAnimeTitle(a.animeTitle || '');
+      return Number(extracted.season) === s;
+    });
+    if (strict.length) {
+      list = strict;
+      steps.push({ step: 'season_number', season: s, count: list.length, mode: 'strict' });
+    } else {
+      const loose = list.filter(a => {
+        const extracted = extractSeasonNumberFromAnimeTitle(a.animeTitle || '');
+        return extracted.season == null;
+      });
+      list = loose.length ? loose : list;
+      steps.push({ step: 'season_number', season: s, count: list.length, mode: 'fallback_or_all' });
+    }
+  }
+
+  if (episode != null) {
+    const e = toEpisodeNum(episode);
+    const cap = list.filter(a => animeEpisodeCapacity(a) >= e);
+    if (cap.length) {
+      list = cap;
+      steps.push({ step: 'episode_capacity', episode: e, count: list.length });
+    } else {
+      steps.push({ step: 'episode_capacity', episode: e, count: 0, note: 'none has enough episodes' });
+    }
+  }
+
+  // 地区拆分：禁止 US/UK 同批聚合
+  const wantRegion = normalizeRegion(region);
+  if (wantRegion) {
+    const hit = list.filter(a => {
+      const r = inferRegionFromTitle(a.animeTitle || '', (a.aliases || []).join(' ')).region;
+      return r === wantRegion;
+    });
+    if (hit.length) {
+      list = hit;
+      steps.push({ step: 'region', region: wantRegion, count: list.length });
+    }
+  } else {
+    const byReg = new Map();
+    for (const a of list) {
+      const r = inferRegionFromTitle(a.animeTitle || '', (a.aliases || []).join(' ')).region || 'unk';
+      if (!byReg.has(r)) byReg.set(r, []);
+      byReg.get(r).push(a);
+    }
+    if (byReg.size > 1) {
+      // 系列年消歧：query.year 匹配各 region 的 S1 年
+      const y = extractYearValue(year);
+      let chosen = null;
+      if (y) {
+        for (const [r, arr] of byReg.entries()) {
+          const s1year = findSeriesYearForRegion(pool, r);
+          if (s1year === y) {
+            chosen = arr;
+            steps.push({ step: 'region_by_series_year', region: r, year: y, count: arr.length });
+            break;
+          }
+        }
+      }
+      if (!chosen) {
+        // 默认取条目最多的 region（通常美版源更全）；并记录
+        let best = null;
+        let bestN = -1;
+        for (const [r, arr] of byReg.entries()) {
+          if (arr.length > bestN) {
+            bestN = arr.length;
+            best = { r, arr };
+          }
+        }
+        chosen = best?.arr || list;
+        steps.push({
+          step: 'region_pick_largest',
+          region: best?.r || 'unk',
+          count: chosen.length,
+          regions: [...byReg.keys()]
+        });
+      }
+      list = chosen;
+    } else {
+      steps.push({ step: 'region', region: [...byReg.keys()][0] || null, count: list.length });
+    }
+  }
+
+  // 年份：系列年 或 该季年
+  if (year) {
+    const y = extractYearValue(year);
+    if (y) {
+      const yearHit = list.filter(a => animeYear(a) === y);
+      // 也接受：系列年匹配（S1 year == y）
+      const seriesHit = list.filter(a => {
+        const r = inferRegionFromTitle(a.animeTitle || '').region;
+        return findSeriesYearForRegion(pool, r) === y;
+      });
+      if (yearHit.length && yearHit.length < list.length) {
+        list = yearHit;
+        steps.push({ step: 'year_air', year: y, count: list.length });
+      } else if (seriesHit.length && seriesHit.length <= list.length) {
+        list = seriesHit;
+        steps.push({ step: 'year_series', year: y, count: list.length });
+      } else {
+        steps.push({ step: 'year', year: y, count: list.length, mode: 'no_change' });
+      }
+    }
+  }
+
+  return { animes: list, steps };
+}
+
+/** 同 region 下 S1 的播出年 ≈ 系列年 */
+function findSeriesYearForRegion(animes, region) {
+  const r = normalizeRegion(region);
+  for (const a of animes || []) {
+    const ar = inferRegionFromTitle(a.animeTitle || '', (a.aliases || []).join(' ')).region;
+    if (r && ar && ar !== r) continue;
+    if (r && !ar) continue;
+    const { season } = extractSeasonNumberFromAnimeTitle(a.animeTitle || '');
+    if (Number(season) === 1) {
+      const y = animeYear(a);
+      if (y) return y;
+    }
+  }
+  return null;
+}
+
+/**
+ * 从匹配结果构建完整影视 metadata（调试 + Forward 显示）
+ * 字段缺失时显式为 null，便于确认 LogVar 实际识别到什么
+ */
+export function buildMatchedMediaMetadata(query, matchedAnimes = [], filterSteps = [], allAnimes = []) {
+  const season = toSeasonNum(query.season);
+  const episode = toEpisodeNum(query.episode);
+  const primary = matchedAnimes[0] || null;
+  const aliases = Array.isArray(primary?.aliases) ? primary.aliases : [];
+  const originalFromAlias = aliases.find(a => /^[A-Za-z0-9]/.test(String(a))) || aliases[0] || null;
+  // 中文名优先：查询 title，否则从匹配条目标题去季号
+  let titleCn = String(query.title || '').trim() || null;
+  if (!titleCn && primary?.animeTitle) {
+    titleCn = String(primary.animeTitle)
+      .replace(/【[^】]*】/g, ' ')
+      .replace(/\s*from\s+[\w.-]+/gi, ' ')
+      .replace(/[（(]美版[）)]/g, ' ')
+      .replace(/[（(]英版[）)]/g, ' ')
+      .replace(/\(\d{4}\)/g, ' ')
+      .replace(/第\s*[0-9一二三四五六七八九十百千万]+\s*[季期部].*$/u, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  const primaryTitle = primary ? sanitizePlayerTitle(primary.animeTitle || '') : null;
+  const regInfo = primary
+    ? inferRegionFromTitle(primary.animeTitle || '', (aliases || []).join(' '))
+    : { region: normalizeRegion(query.region), region_label: regionLabel(query.region) };
+  const region = normalizeRegion(query.region) || regInfo.region;
+  const region_label = regionLabel(region) || regInfo.region_label;
+  const pool = allAnimes.length ? allAnimes : matchedAnimes;
+  const seriesYear = findSeriesYearForRegion(pool, region)
+    || extractYearValue(query.year)
+    || (primary ? animeYear(primary) : null);
+
+  const display = formatVersionDisplay({
+    title: titleCn,
+    region,
+    region_label,
+    year: seriesYear,
+    season,
+    episode,
+    withEpisode: false
+  });
+  const displayFull = formatVersionDisplay({
+    title: titleCn,
+    region,
+    region_label,
+    year: seriesYear,
+    season,
+    episode,
+    withEpisode: true
+  });
+
+  const meta = {
+    title: titleCn,
+    original_title:
+      query.original_title ||
+      (originalFromAlias ? String(originalFromAlias) : null),
+    year: seriesYear,
+    season_year: primary ? animeYear(primary) : null,
+    region: region || null,
+    region_label: region_label || null,
+    tmdb_id: query.tmdb_id || primary?.tmdb_id || primary?.tmdbId || null,
+    imdb_id: query.imdb_id || primary?.imdb_id || primary?.imdbId || null,
+    tvdb_id: query.tvdb_id || primary?.tvdb_id || primary?.tvdbId || null,
+    country: query.country || (region === 'us' ? '美国' : region === 'uk' ? '英国' : null),
+    network: query.network || primary?.network || null,
+    season,
+    episode,
+    display_title: display,
+    display: displayFull,
+    matched_anime_id: primary?.animeId ?? primary?.bangumiId ?? null,
+    matched_anime_title: primaryTitle,
+    matched_source: primary?.source || null,
+    matched_start_date: primary?.startDate || null,
+    matched_episode_count: primary ? animeEpisodeCapacity(primary) : null,
+    matched_count: matchedAnimes.length,
+    matched_titles: matchedAnimes.slice(0, 12).map(a => sanitizePlayerTitle(a.animeTitle || '')),
+    filter_steps: filterSteps,
+    query_ids: {
+      tmdb_id: query.tmdb_id || null,
+      imdb_id: query.imdb_id || null,
+      tvdb_id: query.tvdb_id || null,
+      movie_id: query.movie_id || null
+    }
+  };
+
+  log('info', `[LogVar-Meta] ${JSON.stringify(meta)}`);
+  return meta;
+}
+
+/**
+ * 搜索并收集该集全部可用来源
+ */
+async function resolveMultiSources(query) {
+  const season = toSeasonNum(query.season);
+  const episode = toEpisodeNum(query.episode);
+  let keyword = query.title || '';
+  if (!keyword && query.tmdb_id) keyword = String(query.tmdb_id);
+  if (!keyword && query.movie_id) keyword = String(query.movie_id);
+  if (!keyword && query.imdb_id) keyword = String(query.imdb_id);
+  // 不把 year 拼进 keyword 做标题猜测；年份仅作结构化过滤
+  if (!keyword) {
+    return {
+      sources: [],
+      animes: [],
+      keyword: '',
+      season,
+      episode,
+      media: buildMatchedMediaMetadata(query, [], [{ step: 'empty_keyword', count: 0 }]),
+      filterSteps: []
+    };
+  }
+
+  const searchUrl = new URL('http://local/api/v2/search/anime');
+  searchUrl.searchParams.set('keyword', keyword);
+  searchUrl.searchParams.set('season', String(season));
+  searchUrl.searchParams.set('episode', String(episode));
+
+  log('info', `[ForwardAdapter] search keyword="${keyword}" S${season}E${episode} year=${query.year || '-'} tmdb=${query.tmdb_id || '-'} imdb=${query.imdb_id || '-'}`);
+  const t0 = Date.now();
+  const searchRes = await searchAnime(searchUrl);
+  const searchBody = JSON.parse(await searchRes.text());
+  const searchMs = Date.now() - t0;
+  const animes = searchBody.animes || [];
+  log('info', `[ForwardAdapter] search done animes=${animes.length} ${searchMs}ms`);
+
+  // 补全带 links 的详情：优先 globals.animes，必要时 getBangumi
+  const detailed = [];
+  const seenIds = new Set();
+  // 搜索结果中的 aliases / 外部字段，按 id 合并（globals 里常缺 aliases）
+  const searchById = new Map();
+  for (const a of animes) {
+    const id = a?.bangumiId || a?.animeId;
+    if (id != null) searchById.set(String(id), a);
+  }
+  const mergeSearchMeta = (a) => {
+    const id = a?.bangumiId || a?.animeId;
+    const s = id != null ? searchById.get(String(id)) : null;
+    if (!s) return a;
+    return {
+      ...a,
+      aliases: a.aliases?.length ? a.aliases : s.aliases,
+      tmdb_id: a.tmdb_id || a.tmdbId || s.tmdb_id || s.tmdbId || null,
+      imdb_id: a.imdb_id || a.imdbId || s.imdb_id || s.imdbId || null,
+      tvdb_id: a.tvdb_id || a.tvdbId || s.tvdb_id || s.tvdbId || null,
+      country: a.country || s.country || null,
+      network: a.network || s.network || null
+    };
+  };
+
+  // globals 中已有完整结构
+  if (Array.isArray(globals.animes)) {
+    for (const a of globals.animes) {
+      if (!a?.links?.length) continue;
+      if (query.title && !titleLooksMatch(a.animeTitle, query.title) && !titleLooksMatch(a.animeTitle, keyword)) {
+        continue;
+      }
+      const id = a.bangumiId || a.animeId;
+      if (id && seenIds.has(String(id))) continue;
+      if (id) seenIds.add(String(id));
+      detailed.push(mergeSearchMeta(a));
+    }
+  }
+
+  // 对搜索结果补全 links
+  for (const a of animes.slice(0, 40)) {
+    const id = a.bangumiId || a.animeId;
+    if (!id || seenIds.has(String(id))) continue;
+    try {
+      const g = (globals.animes || []).find(
+        x => String(x.bangumiId || x.animeId) === String(id)
+      );
+      if (g?.links?.length) {
+        detailed.push(g);
+        seenIds.add(String(id));
+        continue;
+      }
+      const detailRes = await getBangumi(String(id));
+      const detailBody = JSON.parse(await detailRes.text());
+      const g2 = (globals.animes || []).find(
+        x => String(x.bangumiId || x.animeId) === String(id)
+      );
+      if (g2?.links?.length) {
+        detailed.push(g2);
+        seenIds.add(String(id));
+      } else if (detailBody?.bangumi) {
+        detailed.push({
+          ...a,
+          animeTitle: detailBody.bangumi.animeTitle || a.animeTitle,
+          links: (detailBody.bangumi.episodes || []).map(ep => ({
+            id: ep.episodeId,
+            title: ep.episodeTitle,
+            url: null
+          })),
+          source: a.source
+        });
+        seenIds.add(String(id));
+      }
+    } catch (e) {
+      log('warn', `[ForwardAdapter] getBangumi ${id} failed: ${e.message}`);
+    }
+  }
+
+  // 内容消歧：排除同名综艺/赏析/幕后纪实/非主标题引用
+  const contentQuery = {
+    title: query.title || keyword,
+    type: query.type || 'unknown',
+    year: query.year || null
+  };
+  const {
+    kept: contentKept,
+    rejected: contentRejected,
+    steps: contentSteps
+  } = filterContentCandidates(detailed, contentQuery);
+  for (const r of (contentRejected || []).slice(0, 20)) {
+    log(
+      'info',
+      `[ForwardAdapter] content reject [${r.reason}] type=${r.type || '-'} title=${r.title || '-'}`
+    );
+  }
+  log(
+    'info',
+    `[ForwardAdapter] content filter ${detailed.length} -> ${contentKept.length} (rejected ${contentRejected.length})`
+  );
+
+  // 结构化筛选：季号 + 集数容量 + 地区拆分 + 系列年
+  const { animes: filtered, steps: identitySteps } = filterAnimesByIdentity(contentKept, {
+    season,
+    episode,
+    year: query.year,
+    tmdb_id: query.tmdb_id,
+    imdb_id: query.imdb_id,
+    tvdb_id: query.tvdb_id,
+    region: query.region,
+    allAnimes: contentKept
+  });
+  const filterSteps = [...(contentSteps || []), ...(identitySteps || [])];
+
+  const media = buildMatchedMediaMetadata(query, filtered, filterSteps, contentKept);
+  log(
+    'info',
+    `[ForwardAdapter] identity filter ${contentKept.length} -> ${filtered.length}; display="${media.display}" region=${media.region}`
+  );
+
+  const sources = collectEpisodeSourcesFromAnimes(filtered, episode);
+  // 平台去重，最多 8 源；附带版本元数据
+  const byPlat = new Map();
+  for (const s of sources) {
+    const k = String(s.source || 'unknown').toLowerCase();
+    if (!byPlat.has(k)) {
+      byPlat.set(k, {
+        ...s,
+        region: media.region,
+        year: media.year,
+        original_title: media.original_title,
+        anime_title: s.anime_title || media.matched_anime_title || media.title,
+        fileName: buildSourceFileLabel({
+          source: s.source,
+          original_title: media.original_title,
+          title: media.title,
+          region: media.region,
+          year: media.year,
+          season,
+          episode,
+          url: s.url
+        })
+      });
+    }
+  }
+  const deduped = [...byPlat.values()].slice(0, 8);
+  log('info', `[ForwardAdapter] discovered sources=${deduped.length} [${deduped.map(s => `${s.source}:${s.fileName}`).join(' | ')}]`);
+
+  return {
+    sources: deduped,
+    animes: filtered,
+    allCandidates: detailed,
+    keyword,
+    season,
+    episode,
+    searchMs,
+    animeCount: animes.length,
+    media,
+    filterSteps
+  };
+}
+
+/**
+ * Forward 主入口
+ */
+export async function getForwardDanmaku(queryInput = {}) {
+  const started = Date.now();
+  const query = parseForwardQuery(queryInput);
+  const season = toSeasonNum(query.season);
+  const episode = toEpisodeNum(query.episode);
+  const titleHint = query.title || query.tmdb_id || query.movie_id || query.imdb_id || '';
+
+  if (!titleHint && !query.episode_id && !query.anime_id) {
+    const err = new TypeError('require title, tmdb_id, movie_id, imdb_id or episode_id');
+    err.status = 400;
+    throw err;
+  }
+
+  // cacheIdentity 在 resolve 后用完整 region/year 构建；此处仅作 force 前的预检占位
+  let cacheIdentity = {
+    title: String(query.title || titleHint),
+    original_title: query.original_title || null,
+    tmdb_id: query.tmdb_id || query.movie_id || null,
+    imdb_id: query.imdb_id || null,
+    region: query.region || null,
+    year: query.year || null,
+    season,
+    episode
+  };
+
+  // Forward 专属 API：不走 commentId 单源旁路；统一版本匹配 + 聚合
+  // （若带 episode_id，仅作为辅助提示写入 query，仍走 resolveMultiSources）
+  if (query.episode_id) {
+    log('info', `[ForwardAdapter] episode_id=${query.episode_id} noted; still force aggregate path`);
+  }
+
+  // —— 搜索 + 收集全部来源 + 聚合清洗 ——
+  const resolved = await resolveMultiSources({ ...query, season, episode, title: titleHint });
+  const { sources, searchMs, animeCount, media } = resolved;
+
+  // 仅识别：返回完整 metadata，count=0
+  if (query.resolve_only) {
+    const elapsed = Date.now() - started;
+    log('info', `[ForwardAdapter] resolve_only display="${media?.display || '-'}" matched=${media?.matched_count || 0} ${elapsed}ms`);
+    const payload = {
+      count: 0,
+      comments: [],
+      media: slimMedia(media),
+      meta: query.debug
+        ? {
+            resolve_only: true,
+            media,
+            filter_steps: resolved.filterSteps || media?.filter_steps || [],
+            processing_ms: elapsed,
+            search_ms: searchMs,
+            anime_count: animeCount,
+            source_count: sources.length
+          }
+        : undefined
+    };
+    if (!query.debug) delete payload.meta;
+    return wrapResult(payload, query, {
+      cached: false,
+      resolve_only: true,
+      processing_ms: elapsed,
+      media,
+      source_count: sources.length
+    });
+  }
+
+  // Forward 专属：强制走聚合缓存（strict_sources，禁止二次宽松发现单源旁路）
+  cacheIdentity = {
+    title: media?.title || query.title || titleHint,
+    original_title: media?.original_title || query.original_title || null,
+    tmdb_id: query.tmdb_id || query.movie_id || media?.tmdb_id || null,
+    imdb_id: query.imdb_id || media?.imdb_id || null,
+    region: media?.region || query.region || null,
+    region_label: media?.region_label || null,
+    year: media?.year || query.year || null,
+    season,
+    episode
+  };
+
+  // 带完整 identity 的缓存命中（新 key 含 region/year）
+  if (!query.force) {
+    const cached = await tryLoadEpisodeCache(cacheIdentity);
+    if (cached?.comments?.length) {
+      const elapsed = Date.now() - started;
+      log('info', `[ForwardAdapter] cache hit ${cached.key} count=${cached.comments.length} ${elapsed}ms`);
+      const payload = buildForwardDanmakuPayload({
+        comments: cached.comments,
+        includeMeta: query.debug,
+        meta: query.debug
+          ? {
+              cached: true,
+              key: cached.key,
+              identity: cached.identity,
+              media: slimMedia(media),
+              sources: cached.sources || [],
+              sources_detail: cached.sources || [],
+              stats: cached.stats || {},
+              processing_ms: elapsed,
+              pipeline: 'cache→present'
+            }
+          : null,
+        colorToWhite: query.color_to_white,
+        forceScroll: query.force_scroll
+      });
+      payload.media = slimMedia(media);
+      payload.sources_detail = query.debug ? (cached.sources || []) : undefined;
+      return wrapResult(payload, query, {
+        cached: true,
+        key: cached.key,
+        sources: cached.sources,
+        stats: cached.stats,
+        processing_ms: elapsed,
+        media,
+        source_count: (cached.sources || []).length
+      });
+    }
+  }
+
+  if (!sources.length) {
+    // 无来源：Forward 不允许「裸单源旁路」，直接空结果 + media
+    const emptyMedia = media || buildMatchedMediaMetadata(query, [], resolved.filterSteps || [], []);
+    return wrapResult(
+      { count: 0, comments: [], media: slimMedia(emptyMedia) },
+      query,
+      {
+        cached: false,
+        errorMessage: '未找到可用弹幕来源（Forward 强制聚合路径）',
+        processing_ms: Date.now() - started,
+        media: emptyMedia
+      }
+    );
+  }
+
+  log('info', `[ForwardAdapter] FORCE aggregate n=${sources.length} media=${media?.display || '-'} key=${buildEpisodeIdentity(cacheIdentity).key}`);
+  const agg = await aggregateEpisode({
+    title: cacheIdentity.title,
+    original_title: cacheIdentity.original_title,
+    tmdb_id: cacheIdentity.tmdb_id,
+    imdb_id: cacheIdentity.imdb_id,
+    region: cacheIdentity.region,
+    region_label: cacheIdentity.region_label,
+    year: cacheIdentity.year,
+    season,
+    episode,
+    force: query.force === true,
+    timeline: true,
+    strict_sources: true,
+    sources: sources.map(s => ({
+      source: s.source,
+      url: s.url,
+      full_url: s.full_url || s.url,
+      episode_id: s.episode_id,
+      anime_title: s.anime_title,
+      episode_title: s.episode_title,
+      fileName: s.fileName,
+      region: s.region || cacheIdentity.region,
+      year: s.year || cacheIdentity.year,
+      original_title: s.original_title || cacheIdentity.original_title
+    }))
+  });
+
+  let comments = toPlayerComments(agg.comments || []);
+  // 固定流水线末段：颜色/位置转换（Forward 服务端完成）
+  comments = applyPlayerPresentation(comments, {
+    colorToWhite: query.color_to_white,
+    forceScroll: query.force_scroll
+  });
+  const elapsed = Date.now() - started;
+
+  const sourcesDetail = (agg.sources || []).map((s, i) => ({
+    ...s,
+    file_name: s.file_name || s.fileName || sources[i]?.fileName || null,
+    matched_title: s.matched_title || s.anime_title || sources[i]?.anime_title || null
+  }));
+
+  const meta = {
+    cached: Boolean(agg.cached),
+    key: agg.key,
+    identity: {
+      ...cacheIdentity,
+      display: media?.display
+    },
+    media,
+    sources: sourcesDetail,
+    sources_detail: sourcesDetail,
+    stats: {
+      total_before: agg.stats?.total_before,
+      total_after: comments.length,
+      removed: agg.stats?.removed,
+      removed_by_reason: agg.stats?.removed_by_reason,
+      processing_ms: agg.stats?.processing_ms,
+      pipeline_ms: elapsed,
+      search_ms: searchMs,
+      color_to_white: query.color_to_white,
+      force_scroll: query.force_scroll
+    },
+    anime_count: animeCount,
+    source_count: sourcesDetail.length,
+    pipeline: 'match→aggregate→dedupe→color→scroll→return'
+  };
+
+  const payload = buildForwardDanmakuPayload({
+    comments,
+    includeMeta: query.debug,
+    meta: query.debug ? meta : null,
+    // 已在上方 apply，避免双重
+    colorToWhite: false,
+    forceScroll: false
+  });
+  // 覆盖 count（apply 后）
+  payload.count = comments.length;
+  payload.comments = comments;
+  payload.media = slimMedia(media);
+  if (query.debug) {
+    payload.sources_detail = sourcesDetail;
+  }
+
+  return wrapResult(payload, query, {
+    cached: Boolean(agg.cached),
+    key: agg.key,
+    sources: sourcesDetail,
+    stats: meta.stats,
+    processing_ms: elapsed,
+    source_count: sourcesDetail.length,
+    media
+  });
+}
+
+/** 播放器可见的轻量 media（无来源统计） */
+function slimMedia(media) {
+  if (!media) return null;
+  return {
+    title: media.title ?? null,
+    original_title: media.original_title ?? null,
+    year: media.year ?? null,
+    season_year: media.season_year ?? null,
+    region: media.region ?? null,
+    region_label: media.region_label ?? null,
+    tmdb_id: media.tmdb_id ?? null,
+    imdb_id: media.imdb_id ?? null,
+    tvdb_id: media.tvdb_id ?? null,
+    country: media.country ?? null,
+    network: media.network ?? null,
+    season: media.season ?? null,
+    episode: media.episode ?? null,
+    display_title: media.display_title ?? null,
+    display: media.display ?? null
+  };
+}
+
+function wrapResult(payload, query, extra = {}) {
+  return {
+    success: (payload.comments?.length || 0) > 0 || !extra.errorMessage,
+    errorMessage: extra.errorMessage || '',
+    format: query.format,
+    payload,
+    internal: extra,
+    json: payload,
+    xml: () => toPlayerXml(payload.comments || []),
+    ass: () => toPlayerAss(payload.comments || [])
+  };
+}
+
+export function adaptSearchAnimesForForward(animes = []) {
+  return sanitizeAnimeList(animes);
+}
+
+export function adaptEpisodesForForward(episodes = []) {
+  return sanitizeEpisodeList(episodes);
+}
+
+export function resolveForwardIdentity() {
+  return null;
+}

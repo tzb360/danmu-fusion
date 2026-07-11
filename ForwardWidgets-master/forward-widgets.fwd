@@ -1,0 +1,52 @@
+{
+  "title": "Forward Widgets",
+  "description": "Forward Official Widgets",
+  "icon": "https://assets.vvebo.vip/scripts/icon.png",
+  "widgets": [
+    {
+      "id": "forward.tmdb",
+      "title": "TMDB",
+      "description": "获取 TMDB 的榜单数据",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.5",
+      "author": "Forward",
+      "url": "https://assets.vvebo.vip/scripts/tmdb.js"
+    },
+    {
+      "id": "forward.trendingmedia",
+      "title": "影视数据",
+      "description": "获取时下热门电影、电视剧和综艺数据",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.0",
+      "author": "Forward",
+      "url": "https://assets.vvebo.vip/scripts/trendingmedia.js"
+    },
+    {
+      "id": "forward.bangumi",
+      "title": "动漫数据",
+      "description": "获取时下热门动漫数据和播出日历",
+      "requiredVersion": "0.0.1",
+      "version": "1.0.0",
+      "author": "Forward",
+      "url": "https://assets.vvebo.vip/scripts/bangumi.js"
+    },
+    {
+      "id": "forward.danmu",
+      "title": "自定义弹幕",
+      "description": "全局参数支持多个自定义服务器，以换行分割。",
+      "requiredVersion": "0.0.2",
+      "version": "1.1.6",
+      "author": "Forward",
+      "url": "https://assets.vvebo.vip/scripts/danmu.js"
+    },
+    {
+      "id": "forward.nlsearch",
+      "title": "AI 搜索",
+      "description": "用自然语言描述你想看的内容，AI 理解意图后搜索匹配结果",
+      "requiredVersion": "0.0.2",
+      "version": "1.0.0",
+      "author": "Forward",
+      "url": "https://assets.vvebo.vip/scripts/nlsearch.js"
+    }
+  ]
+}

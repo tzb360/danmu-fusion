@@ -1,0 +1,24 @@
+.idea
+package-lock.json
+node_modules
+.env
+.cache
+dist
+
+# local secrets
+config/.env
+.cache/
+logs/
+# OS / IDE
+.DS_Store
+**/.DS_Store
+.idea/
+*.swp
+# secrets & local runtime (never commit)
+.env.*
+!.env.example
+config/.env.backup.*
+*.log
+# dependencies / build
+node_modules/
+dist/

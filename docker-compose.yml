@@ -1,0 +1,36 @@
+# Danmu API - Docker 部署
+# 兼容 docker-compose 1.29+ 与 Docker Compose V2
+# 请通过 .env / config/.env 配置 TOKEN，勿把真实密钥提交到 Git
+services:
+  danmu-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: danmu-api:local
+    container_name: danmu-api
+    ports:
+      - "${HOST_PORT:-9321}:${DANMU_API_PORT:-9321}"
+    env_file:
+      - ./config/.env
+    environment:
+      TOKEN: "${TOKEN:-87654321}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
+      DANMU_API_PORT: "${DANMU_API_PORT:-9321}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      DANMAKU_RULES_PATH: "config/danmaku-filter-rules.json"
+      TZ: "${TZ:-Asia/Shanghai}"
+    volumes:
+      - ./config:/app/config
+      - ./.cache:/app/.cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.DANMU_API_PORT||9321)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
