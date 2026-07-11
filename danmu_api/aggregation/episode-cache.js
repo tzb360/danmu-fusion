@@ -1,8 +1,20 @@
 /**
  * 剧集级弹幕聚合缓存：内存 + .cache/episodes/*.json
+ *
+ * 保护：
+ * - cache_version 不匹配自动失效
+ * - TTL 过期失效
+ * - 禁止缓存空结果
+ * - 超大结果拒绝落盘（防污染）
  */
 import { log } from '../utils/log-util.js';
 import { toSafeCacheFileName } from './episode-identity.js';
+import {
+  getGuardConfig,
+  isCacheEntryValid,
+  shouldPersistCache,
+  EPISODE_CACHE_VERSION
+} from './source-guard.js';
 
 const memoryIndex = new Map();
 let fsModule = null;
@@ -89,8 +101,14 @@ export function setEpisodeCacheMemory(entry) {
 }
 
 export async function loadEpisodeCache(key) {
+  const cfg = getGuardConfig();
   const mem = getEpisodeCacheMemory(key);
-  if (mem) return mem;
+  if (mem) {
+    const v = isCacheEntryValid(mem, cfg);
+    if (v.ok) return mem;
+    memoryIndex.delete(key);
+    log('info', `[EpisodeCache] memory miss ${key}: ${v.reason}`);
+  }
 
   const mods = await ensureFs();
   const dir = await ensureDir();
@@ -100,12 +118,24 @@ export async function loadEpisodeCache(key) {
   const file = filePathForKey(dir, key);
   try {
     if (!fs.existsSync(file)) return null;
+    // 超大文件直接丢弃，避免读入 OOM
+    const st = fs.statSync(file);
+    if (st.size > cfg.cacheMaxBytes) {
+      log('warn', `[EpisodeCache] drop oversized file ${key} size=${st.size}`);
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+      return null;
+    }
     const raw = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(raw);
-    if (parsed?.key) {
-      setEpisodeCacheMemory(parsed);
-      return parsed;
+    if (!parsed?.key) return null;
+    const v = isCacheEntryValid(parsed, cfg);
+    if (!v.ok) {
+      log('info', `[EpisodeCache] disk invalid ${key}: ${v.reason}`);
+      try { fs.unlinkSync(file); } catch { /* ignore */ }
+      return null;
     }
+    setEpisodeCacheMemory(parsed);
+    return parsed;
   } catch (error) {
     log('warn', `[EpisodeCache] load failed ${key}: ${error.message}`);
   }
@@ -114,9 +144,17 @@ export async function loadEpisodeCache(key) {
 
 export async function saveEpisodeCache(entry) {
   if (!entry?.key) throw new TypeError('episode cache entry requires key');
+  const cfg = getGuardConfig();
+  const gate = shouldPersistCache(entry, cfg);
+  if (!gate.ok) {
+    log('info', `[EpisodeCache] skip persist ${entry.key}: ${gate.reason}`);
+    return { ...entry, persisted: false, skip_reason: gate.reason };
+  }
+
   const now = new Date().toISOString();
   const payload = {
     ...entry,
+    cache_version: EPISODE_CACHE_VERSION,
     updated_at: now,
     created_at: entry.created_at || now
   };
@@ -131,8 +169,13 @@ export async function saveEpisodeCache(entry) {
   const { fs } = mods;
   const file = filePathForKey(dir, entry.key);
   try {
+    const json = JSON.stringify(payload);
+    if (Buffer.byteLength(json, 'utf8') > cfg.cacheMaxBytes) {
+      log('warn', `[EpisodeCache] skip persist oversized payload ${entry.key}`);
+      return { ...payload, persisted: false, skip_reason: 'payload_too_large' };
+    }
     const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(payload), 'utf8');
+    fs.writeFileSync(tmp, json, 'utf8');
     fs.renameSync(tmp, file);
     return { ...payload, persisted: true, path: file };
   } catch (error) {

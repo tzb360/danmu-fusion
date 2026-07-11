@@ -651,9 +651,16 @@ function stripInternalFields(item) {
 }
 
 export function processDanmakuItems(rawItems, rules) {
-  const maxInputItems = rules.performance?.max_input_items ?? 1000000;
-  if (rawItems.length > maxInputItems) {
-    throw new RangeError(`Too many danmaku items: ${rawItems.length}, max ${maxInputItems}`);
+  // 默认收紧上限；超限时等间隔截断而非抛错（抛错会导致整片 0 弹幕）
+  const maxInputItems = rules.performance?.max_input_items ?? 80000;
+  let inputItems = rawItems;
+  if (Array.isArray(rawItems) && rawItems.length > maxInputItems) {
+    const interval = rawItems.length / maxInputItems;
+    const reduced = new Array(maxInputItems);
+    for (let i = 0; i < maxInputItems; i++) {
+      reduced[i] = rawItems[Math.floor(i * interval)];
+    }
+    inputItems = reduced;
   }
 
   const stats = {
@@ -665,9 +672,9 @@ export function processDanmakuItems(rawItems, rules) {
   const runtime = createRuleRuntime(rules);
 
   // 批量预计算归一化 / SimHash，后续步骤 O(1) 取用
-  const prepared = new Array(rawItems.length);
-  for (let i = 0; i < rawItems.length; i++) {
-    prepared[i] = prepareDanmakuItem(rawItems[i]);
+  const prepared = new Array(inputItems.length);
+  for (let i = 0; i < inputItems.length; i++) {
+    prepared[i] = prepareDanmakuItem(inputItems[i]);
   }
 
   const { items: alignedItems, offsets } = alignTimelines(prepared, rules);

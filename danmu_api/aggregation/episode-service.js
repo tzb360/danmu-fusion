@@ -25,31 +25,14 @@ import {
 } from './episode-identity.js';
 import { loadEpisodeCache, saveEpisodeCache, listEpisodeCaches, deleteEpisodeCache, getEpisodeCacheDetail } from './episode-cache.js';
 import { limitDanmusByCount } from '../utils/danmu-util.js';
-
-/**
- * 单源进入清洗前的最大条数。
- * - DANMU_LIMIT>0 时按 k×1000
- * - 否则读 AGGREGATE_MAX_PER_SOURCE / EPISODE_AGGREGATE_MAX_RAW
- * - 再否则默认 40000（1GB VPS 上 bilibili 30万+ 全量清洗会 OOM 崩溃，客户端表现为 0 条）
- */
-function resolvePerSourceCap() {
-  const k = Number(globals.danmuLimit);
-  if (Number.isFinite(k) && k > 0) return Math.floor(k * 1000);
-  const envCap = Number(process.env.AGGREGATE_MAX_PER_SOURCE || process.env.EPISODE_AGGREGATE_MAX_RAW || 0);
-  if (Number.isFinite(envCap) && envCap > 0) return Math.floor(envCap);
-  return 40000;
-}
-
-/** 等间隔采样，保持时间轴分布 */
-function sampleEvenly(items, maxN) {
-  if (!Array.isArray(items) || items.length <= maxN) return items;
-  const interval = items.length / maxN;
-  const out = new Array(maxN);
-  for (let i = 0; i < maxN; i++) {
-    out[i] = items[Math.floor(i * interval)];
-  }
-  return out;
-}
+import {
+  getGuardConfig,
+  protectMultiSource,
+  capFinalComments,
+  logEpisodeDiagnostics,
+  withTimeout,
+  getMemorySnapshot
+} from './source-guard.js';
 
 import RenrenSource from '../sources/renren.js';
 import HanjutvSource from '../sources/hanjutv.js';
@@ -341,9 +324,10 @@ export function discoverEpisodeSources(identity, options = {}) {
   return sources;
 }
 
-async function fetchOneSource(sourceItem) {
+async function fetchOneSource(sourceItem, guardConfig = null) {
   const sourceName = sourceItem.source || 'unknown';
   const url = sourceItem.url || sourceItem.full_url;
+  const cfg = guardConfig || getGuardConfig();
 
   // 已有数据（上传/测试）
   if (Array.isArray(sourceItem.data)) {
@@ -370,9 +354,9 @@ async function fetchOneSource(sourceItem) {
     return { source: sourceName, weight: sourceItem.weight || 1, items: [], count_raw: 0, error: 'missing url' };
   }
 
-  // 短缓存命中单源
+  // 短缓存命中单源（仅当有数据）
   const cached = getCommentCache(url);
-  if (cached && Array.isArray(cached)) {
+  if (cached && Array.isArray(cached) && cached.length > 0) {
     return {
       source: sourceName,
       weight: sourceItem.weight || 1,
@@ -385,7 +369,7 @@ async function fetchOneSource(sourceItem) {
 
   const instance = SOURCE_INSTANCES[sourceName];
   try {
-    return await sourceLogContext.run(toLogSourceName(sourceName), async () => {
+    const work = sourceLogContext.run(toLogSourceName(sourceName), async () => {
       let items = [];
       if (instance && typeof instance.getEpisodeDanmu === 'function') {
         // 非 http id 形式
@@ -436,14 +420,18 @@ async function fetchOneSource(sourceItem) {
         error: null
       };
     });
+
+    // 单源超时：只失败该源
+    return await withTimeout(work, cfg.fetchTimeoutMs, `fetch:${sourceName}`);
   } catch (error) {
-    log('warn', `[EpisodeAggregate] fetch ${sourceName} failed: ${error.message}`);
+    log('warn', `[EpisodeAggregate] source failed source=${sourceName} err=${error.message}`);
     return {
       source: sourceName,
       weight: sourceItem.weight || 1,
       items: [],
       count_raw: 0,
-      error: error.message
+      error: error.message || String(error),
+      status: 'failed'
     };
   }
 }
@@ -479,14 +467,19 @@ function buildMergeSources(fetchResults) {
 
 /**
  * 主入口：剧集聚合
+ *
+ * 架构：
+ *   发现源 → 隔离抓取(超时/异常不扩散) → 数据保护层(时间桶采样)
+ *   → 质量排序 → 分源清洗合并 → 最终上限 → 缓存保护
  */
 export async function aggregateEpisode(query = {}) {
   const identity = buildEpisodeIdentity(query);
   const force = query.force === true || query.refresh === true;
+  const guardConfig = getGuardConfig();
 
   if (!force) {
     const cached = await loadEpisodeCache(identity.key);
-    if (cached?.comments) {
+    if (cached?.comments?.length) {
       log('info', `[EpisodeAggregate] cache hit ${identity.key} (${cached.comments.length})`);
       return {
         success: true,
@@ -508,6 +501,7 @@ export async function aggregateEpisode(query = {}) {
   });
 
   if (!discovered.length) {
+    // 不缓存空结果
     return {
       success: false,
       cached: false,
@@ -526,12 +520,10 @@ export async function aggregateEpisode(query = {}) {
     log('info', `[EpisodeAggregate][source] platform=${s.source} title=${s.anime_title || '-'} ep=${s.episode_title || '-'} url=${String(s.url || '').slice(0, 80)}`);
   }
 
-  const fetchResults = await Promise.all(discovered.map(s => fetchOneSource(s)));
-  // 附带匹配元数据到统计
-  for (let i = 0; i < fetchResults.length; i++) {
-    const s = discovered[i] || {};
-    fetchResults[i] = {
-      ...fetchResults[i],
+  // 并行抓取；单源失败只记 status=failed
+  const fetchResults = await Promise.all(
+    discovered.map((s) => fetchOneSource(s, guardConfig).then((fr) => ({
+      ...fr,
       anime_title: s.anime_title,
       episode_title: s.episode_title,
       fileName: s.fileName,
@@ -541,69 +533,97 @@ export async function aggregateEpisode(query = {}) {
       season: s.season ?? identity.season,
       episode: s.episode ?? identity.episode,
       url: s.url
-    };
-    log('info', `[EpisodeAggregate][count] source=${fetchResults[i].source} raw=${fetchResults[i].count_raw || 0} title=${s.anime_title || '-'}`);
-  }
+    })))
+  );
 
-  // 大体积单源先采样再清洗，避免低内存 VPS 在 processDanmakuMerge 阶段 OOM（进程崩溃=客户端 0 条）
-  const perSourceCap = resolvePerSourceCap();
   for (const fr of fetchResults) {
-    if (Array.isArray(fr.items) && fr.items.length > perSourceCap) {
-      const before = fr.items.length;
-      fr.items = sampleEvenly(fr.items, perSourceCap);
-      fr.sampled_from = before;
-      fr.sampled_to = fr.items.length;
-      log(
-        'info',
-        `[EpisodeAggregate][sample] source=${fr.source} ${before} -> ${fr.items.length} (cap=${perSourceCap})`
-      );
-    }
+    log(
+      'info',
+      `[EpisodeAggregate][count] source=${fr.source} raw=${fr.count_raw || 0} err=${fr.error || '-'} title=${fr.anime_title || '-'}`
+    );
   }
 
-  const mergeSources = buildMergeSources(fetchResults);
+  // —— 数据保护层：时间桶采样 + 总量控制 + 质量评分 ——
+  const protectedBundle = protectMultiSource(fetchResults, guardConfig);
+  const protectedSources = protectedBundle.sources;
+
+  const mergeSources = buildMergeSources(protectedSources);
 
   if (!mergeSources.length) {
+    logEpisodeDiagnostics(identity, protectedSources, { total_before: 0, total_after: 0, removed: 0 });
     return {
       success: false,
       cached: false,
       key: identity.key,
       identity,
-      sources: fetchResults.map(fr => ({
-        source: fr.source,
-        count_raw: fr.count_raw || 0,
-        weight: fr.weight,
-        error: fr.error
-      })),
-      stats: { total_before: 0, total_after: 0, removed: 0 },
+      sources: protectedSources.map(fr => summarizeSourceMeta(fr, identity)),
+      stats: {
+        total_before: 0,
+        total_after: 0,
+        removed: 0,
+        guard: {
+          total_before_protect: protectedBundle.total_before_protect,
+          total_after_protect: 0,
+          memory: protectedBundle.memory
+        }
+      },
       comments: [],
       count: 0,
       errorMessage: '所有来源抓取失败或为空'
     };
   }
 
-  // 高权重源的弹幕排在前面，利于 exact 保留
-  const ordered = [];
-  for (const ms of mergeSources) {
-    ordered.push(ms);
-  }
-
-  const merged = processDanmakuMerge({
-    episode: identity.episode,
-    sources: ordered,
-    output_format: 'dandan',
-    rules: {
-      ...(query.rules || {}),
-      timeline: {
-        enabled: query.timeline !== false,
-        ...(query.rules?.timeline || {})
-      },
-      pipeline: { enabled: true }
+  let merged;
+  try {
+    merged = processDanmakuMerge({
+      episode: identity.episode,
+      sources: mergeSources,
+      output_format: 'dandan',
+      max_input_items: guardConfig.totalMax,
+      rules: {
+        ...(query.rules || {}),
+        performance: {
+          max_input_items: guardConfig.totalMax,
+          ...(query.rules?.performance || {})
+        },
+        timeline: {
+          enabled: query.timeline !== false,
+          ...(query.rules?.timeline || {})
+        },
+        pipeline: { enabled: true }
+      }
+    });
+  } catch (error) {
+    // 聚合异常：尽量从各源已保护数据中拼接保底结果，避免整片 0
+    log('error', `[EpisodeAggregate] merge failed, fallback per-source: ${error.message}`);
+    const fallbackItems = [];
+    for (const fr of protectedSources) {
+      if (!fr.items?.length) continue;
+      const take = Math.min(fr.items.length, 3000);
+      for (let i = 0; i < take; i++) {
+        const it = fr.items[i];
+        fallbackItems.push(
+          it?.p && it?.m !== undefined
+            ? { p: it.p, m: it.m, cid: i + 1 }
+            : toDandanComment({ ...it, source: fr.source })
+        );
+      }
     }
-  });
+    merged = {
+      total_before: protectedBundle.total_after_protect,
+      total_after: fallbackItems.length,
+      removed: 0,
+      result: fallbackItems,
+      stats: {
+        removed_by_reason: { merge_fallback: 1 },
+        processing_ms: 0,
+        memory_after: getMemorySnapshot()
+      }
+    };
+  }
 
   // 输出 dandan 格式 comments
   let comments = Array.isArray(merged.result) ? merged.result : [];
-  // processDanmakuMerge dandan format already p/m; ensure shape
   comments = comments.map((item, index) => {
     if (item.p && item.m !== undefined) {
       return { p: item.p, m: item.m, cid: item.cid || index + 1, t: item.t, quality_score: item.quality_score };
@@ -611,44 +631,48 @@ export async function aggregateEpisode(query = {}) {
     return toDandanComment(item);
   });
 
-  // 最终输出再套一次 DANMU_LIMIT（单位 k）；0 时不额外截断
-  const limited = limitDanmusByCount(comments, globals.danmuLimit || 0);
-  if (limited.length !== comments.length) {
-    log('info', `[EpisodeAggregate] DANMU_LIMIT applied ${comments.length} -> ${limited.length}`);
-    comments = limited;
+  // DANMU_LIMIT（k）+ 架构 finalMax 双保险
+  if (globals.danmuLimit > 0) {
+    const limited = limitDanmusByCount(comments, globals.danmuLimit);
+    if (limited.length !== comments.length) {
+      log('info', `[EpisodeAggregate] DANMU_LIMIT applied ${comments.length} -> ${limited.length}`);
+      comments = limited;
+    }
+  }
+  const capped = capFinalComments(comments, guardConfig.finalMax);
+  if (capped.after !== capped.before) {
+    log('info', `[EpisodeAggregate] final cap ${capped.before} -> ${capped.after}`);
+    comments = capped.comments;
   }
 
-  const sourceMeta = fetchResults.map(fr => {
-    const file_name = fr.fileName || buildSourceFileLabel({
-      source: fr.source,
-      original_title: fr.original_title || identity.original_title,
-      title: fr.anime_title || identity.title,
-      region: fr.region || identity.region,
-      year: fr.year || identity.year,
-      season: fr.season ?? identity.season,
-      episode: fr.episode ?? identity.episode,
-      url: fr.url
-    });
-    return {
-      source: fr.source,
-      count_raw: fr.count_raw || 0,
-      count_sampled: fr.sampled_to || null,
-      weight: fr.weight,
-      error: fr.error || null,
-      from_cache: Boolean(fr.from_cache),
-      matched_title: fr.anime_title || null,
-      episode_title: fr.episode_title || null,
-      original_title: fr.original_title || identity.original_title || null,
-      region: fr.region || identity.region || null,
-      region_label: identity.region_label || null,
-      year: fr.year || identity.year || null,
-      season: fr.season ?? identity.season,
-      episode: fr.episode ?? identity.episode,
-      file_name,
-      raw_file: file_name,
-      url: fr.url || null
-    };
+  // used 回写到各源诊断
+  const afterBySource = merged.stats?.source_counts_after || {};
+  const sourceMeta = protectedSources.map((fr) => {
+    const meta = summarizeSourceMeta(fr, identity);
+    meta.count_used = afterBySource[fr.source] ?? fr.count_used ?? fr.count_sampled ?? 0;
+    return meta;
   });
+
+  const stats = {
+    total_before: merged.total_before,
+    total_after: comments.length,
+    removed: Math.max(0, (merged.total_before || 0) - comments.length),
+    removed_by_reason: merged.stats?.removed_by_reason || {},
+    processing_ms: merged.stats?.processing_ms,
+    source_counts_before: merged.stats?.source_counts_before,
+    source_counts_after: afterBySource,
+    timeline_offsets: merged.stats?.timeline_offsets,
+    guard: {
+      total_before_protect: protectedBundle.total_before_protect,
+      total_after_protect: protectedBundle.total_after_protect,
+      per_source_max: guardConfig.perSourceMax,
+      total_max: guardConfig.totalMax,
+      final_max: guardConfig.finalMax,
+      memory: getMemorySnapshot()
+    }
+  };
+
+  logEpisodeDiagnostics(identity, sourceMeta, stats);
 
   const entry = {
     key: identity.key,
@@ -675,42 +699,77 @@ export async function aggregateEpisode(query = {}) {
     }),
     sources: sourceMeta,
     sources_detail: sourceMeta,
-    stats: {
-      total_before: merged.total_before,
-      total_after: merged.total_after,
-      removed: merged.removed,
-      removed_by_reason: merged.stats?.removed_by_reason || {},
-      processing_ms: merged.stats?.processing_ms,
-      source_counts_before: merged.stats?.source_counts_before,
-      source_counts_after: merged.stats?.source_counts_after,
-      timeline_offsets: merged.stats?.timeline_offsets
-    },
+    stats,
     comments
   };
 
-  await saveEpisodeCache(entry);
-
-  // 同步写入 URL commentCache，便于旧 getComment 路径命中
-  for (const s of discovered) {
-    if (s.url) {
-      try { setCommentCache(s.url, comments); } catch { /* ignore */ }
+  // 仅非空结果可缓存
+  if (comments.length > 0) {
+    await saveEpisodeCache(entry);
+    for (const s of discovered) {
+      if (s.url) {
+        try { setCommentCache(s.url, comments); } catch { /* ignore */ }
+      }
+      if (s.full_url && s.full_url !== s.url) {
+        try { setCommentCache(s.full_url, comments); } catch { /* ignore */ }
+      }
     }
-    if (s.full_url && s.full_url !== s.url) {
-      try { setCommentCache(s.full_url, comments); } catch { /* ignore */ }
-    }
+  } else {
+    log('info', `[EpisodeCache] skip empty result for ${identity.key}`);
   }
 
-  log('info', `[EpisodeAggregate] ${identity.key} done ${merged.total_before} -> ${merged.total_after}`);
+  // 释放受保护源的大数组引用
+  for (const fr of protectedSources) {
+    if (fr.items) fr.items = null;
+  }
+
+  log('info', `[EpisodeAggregate] ${identity.key} done ${stats.total_before} -> ${stats.total_after}`);
 
   return {
-    success: true,
+    success: comments.length > 0,
     cached: false,
     key: identity.key,
     identity,
     sources: sourceMeta,
-    stats: entry.stats,
+    stats,
     comments,
     count: comments.length
+  };
+}
+
+function summarizeSourceMeta(fr, identity) {
+  const file_name = fr.fileName || buildSourceFileLabel({
+    source: fr.source,
+    original_title: fr.original_title || identity.original_title,
+    title: fr.anime_title || identity.title,
+    region: fr.region || identity.region,
+    year: fr.year || identity.year,
+    season: fr.season ?? identity.season,
+    episode: fr.episode ?? identity.episode,
+    url: fr.url
+  });
+  return {
+    source: fr.source,
+    count_raw: fr.count_raw || 0,
+    count_sampled: fr.count_sampled ?? null,
+    count_used: fr.count_used ?? fr.count_sampled ?? null,
+    quality_score: fr.quality_score ?? null,
+    sample_method: fr.sample_method || null,
+    status: fr.status || (fr.error ? 'failed' : 'ok'),
+    weight: fr.weight,
+    error: fr.error || fr.fail_reason || null,
+    from_cache: Boolean(fr.from_cache),
+    matched_title: fr.anime_title || null,
+    episode_title: fr.episode_title || null,
+    original_title: fr.original_title || identity.original_title || null,
+    region: fr.region || identity.region || null,
+    region_label: identity.region_label || null,
+    year: fr.year || identity.year || null,
+    season: fr.season ?? identity.season,
+    episode: fr.episode ?? identity.episode,
+    file_name,
+    raw_file: file_name,
+    url: fr.url || null
   };
 }
 

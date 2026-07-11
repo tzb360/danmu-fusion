@@ -43,20 +43,69 @@ export function processDanmakuMerge(body = {}) {
   const start = timer.now();
   const memoryBefore = getMemoryUsage();
   const rules = getActiveFilterRules(body.rules || {});
+  // 聚合路径默认限制输入，防止 OOM；调用方可覆盖
+  if (!rules.performance) rules.performance = {};
+  if (rules.performance.max_input_items == null) {
+    rules.performance.max_input_items = Number(body.max_input_items) || 80000;
+  }
   const sources = body.sources || [];
   const parseOptions = {
     episode: body.episode ?? body.default_episode ?? null
   };
 
-  const parsed = parseDanmakuSources(sources, parseOptions);
-  const processed = processDanmakuItems(parsed.items, rules);
+  // 分源解析再合并，避免单次巨型中间数组膨胀；单源失败不影响其它源
+  const sourceStats = {};
+  const allItems = [];
+  const warnings = [];
+  for (let i = 0; i < sources.length; i++) {
+    const src = sources[i];
+    try {
+      const one = parseDanmakuSources([src], parseOptions);
+      const name = src.source || src.platform || `source_${i + 1}`;
+      sourceStats[name] = (one.sourceStats && one.sourceStats[name]) || (one.items?.length || 0);
+      if (Array.isArray(one.items) && one.items.length) {
+        // 分块 push，降低偶发大数组拷贝压力
+        const chunk = 5000;
+        for (let j = 0; j < one.items.length; j += chunk) {
+          allItems.push(...one.items.slice(j, j + chunk));
+        }
+      }
+      if (one.warnings?.length) warnings.push(...one.warnings);
+    } catch (error) {
+      const name = src?.source || `source_${i + 1}`;
+      warnings.push(`source_parse_failed:${name}:${error.message}`);
+      sourceStats[name] = 0;
+    }
+  }
+
+  let processed;
+  try {
+    processed = processDanmakuItems(allItems, rules);
+  } catch (error) {
+    // 清洗失败时尽量保底返回已解析的抽样子集，而不是整片 0
+    const fallback = allItems.slice(0, Math.min(5000, allItems.length));
+    processed = {
+      items: fallback,
+      stats: {
+        source_counts_after: sourceStats,
+        removed_by_reason: { process_error: allItems.length - fallback.length },
+        timeline_offsets: {}
+      },
+      removedSamples: []
+    };
+    warnings.push(`process_failed:${error.message}`);
+  }
+
   const outputFormat = normalizeOutputFormat(body);
   const result = formatResult(processed.items, outputFormat);
   const memoryAfter = getMemoryUsage();
   const processingMs = Number((timer.now() - start).toFixed(2));
 
-  const totalBefore = parsed.items.length;
+  const totalBefore = allItems.length;
   const totalAfter = result.length;
+
+  // 帮助 GC：释放中间大数组引用
+  allItems.length = 0;
 
   return {
     total_before: totalBefore,
@@ -64,16 +113,16 @@ export function processDanmakuMerge(body = {}) {
     removed: totalBefore - totalAfter,
     result,
     stats: {
-      source_counts_before: parsed.sourceStats,
+      source_counts_before: sourceStats,
       source_counts_after: processed.stats.source_counts_after,
       removed_by_reason: processed.stats.removed_by_reason,
       timeline_offsets: processed.stats.timeline_offsets,
-      parse_warnings: parsed.warnings,
+      parse_warnings: warnings,
       processing_ms: processingMs,
       memory_before: memoryBefore,
       memory_after: memoryAfter,
       output_format: outputFormat
     },
-    ...(processed.removedSamples.length ? { removed_samples: processed.removedSamples } : {})
+    ...(processed.removedSamples?.length ? { removed_samples: processed.removedSamples } : {})
   };
 }
