@@ -4,6 +4,7 @@
  * - 标题仅「包含」关键词但主体是另一节目
  * - 查询类型与结果类型明显冲突（电影 vs 综艺）
  */
+import { extractSeasonNumberFromAnimeTitle } from '../utils/common-util.js';
 
 /** 标题噪声：出现则大概率非用户观看的正片 */
 const INTERFERENCE_TITLE_RES = [
@@ -156,8 +157,17 @@ export function isTypeConflict(queryType, resultType) {
   return false;
 }
 
+function toPositiveInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
 /**
  * 综合打分：越高越像正片；-1 表示应丢弃
+ *
+ * 关键：Forward/Emby 常传「剧集首播年 + season=N」。
+ * 此时年份只能作软偏好，季号匹配必须优先，否则 content_score_cut
+ * 会在 identity 过滤前砍掉正确季（线上：无耻之徒 S4 + year=2011 → 英版第八季）。
  */
 export function scoreContentCandidate(anime, query = {}) {
   const title = anime?.animeTitle || anime?.title || '';
@@ -165,6 +175,7 @@ export function scoreContentCandidate(anime, query = {}) {
   const qTitle = query.title || query.keyword || '';
   const qType = query.type || 'unknown';
   const qYear = query.year ? String(query.year).match(/(19|20)\d{2}/)?.[0] : null;
+  const qSeason = toPositiveInt(query.season);
 
   if (isInterferenceTitle(title)) {
     return { score: -1, reason: 'interference_title' };
@@ -185,11 +196,28 @@ export function scoreContentCandidate(anime, query = {}) {
   if (qt === 'tv' && isTvType(type)) score += 40;
   if (qt === 'movie' && isVarietyType(type)) score -= 80;
 
-  // 年份
+  // 季号：指定 season 时压过年份（多季剧 + 首播年场景）
+  const animeSeason = extractSeasonNumberFromAnimeTitle(title).season;
+  if (qSeason != null) {
+    if (Number(animeSeason) === qSeason) {
+      score += 55;
+    } else if (animeSeason == null) {
+      // 无季号合集/电影：可保留，略降以免压过明确季号条目
+      score -= 5;
+    } else {
+      // 明确错误季：强降权，避免 content_score_cut 误留
+      score -= 45;
+    }
+  }
+
+  // 年份：有 season 时仅软偏好（Emby 常给系列首播年）；无 season 时硬偏好
   const y = String(anime?.startDate || title).match(/(19|20)\d{2}/)?.[0];
   if (qYear && y) {
-    if (y === qYear) score += 35;
-    else score -= 25; // 同年份优先，不同年份降权（不直接丢，留给无年份查询）
+    if (y === qYear) {
+      score += qSeason != null ? 12 : 35;
+    } else {
+      score -= qSeason != null ? 5 : 25;
+    }
   }
 
   // 标题越短越像正片主条目
@@ -200,7 +228,7 @@ export function scoreContentCandidate(anime, query = {}) {
     else if (base.length > q.length + 8) score -= 15;
   }
 
-  return { score, reason: 'ok', year: y || null };
+  return { score, reason: 'ok', year: y || null, season: animeSeason };
 }
 
 /**
@@ -211,6 +239,7 @@ export function filterContentCandidates(animes = [], query = {}) {
   const kept = [];
   const rejected = [];
   const steps = [];
+  const qSeason = toPositiveInt(query.season);
 
   for (const a of animes || []) {
     const r = scoreContentCandidate(a, query);
@@ -222,30 +251,55 @@ export function filterContentCandidates(animes = [], query = {}) {
         animeId: a.animeId
       });
     } else {
-      kept.push({ ...a, _content_score: r.score });
+      kept.push({ ...a, _content_score: r.score, _content_season: r.season });
     }
   }
 
   kept.sort((a, b) => (b._content_score || 0) - (a._content_score || 0));
 
   // 若有高分正片，丢掉分数明显更低的尾巴（防止混入边缘项）
+  // 但：指定 season 时，绝不能因年份分差砍掉「正确季」条目
   if (kept.length > 1) {
     const top = kept[0]._content_score || 0;
-    const strong = kept.filter((a) => (a._content_score || 0) >= top - 30);
+    let strong = kept.filter((a) => (a._content_score || 0) >= top - 30);
+
+    if (qSeason != null) {
+      const seasonMatched = kept.filter(
+        (a) => Number(a._content_season) === qSeason
+      );
+      if (seasonMatched.length) {
+        const seen = new Set(strong.map((a) => a.animeId ?? a.animeTitle));
+        for (const a of seasonMatched) {
+          const id = a.animeId ?? a.animeTitle;
+          if (!seen.has(id)) {
+            strong.push(a);
+            seen.add(id);
+          }
+        }
+        // 仍按分数排序
+        strong.sort((a, b) => (b._content_score || 0) - (a._content_score || 0));
+      }
+    }
+
     if (strong.length && strong.length < kept.length) {
-      for (const a of kept.slice(strong.length)) {
-        rejected.push({
-          title: a.animeTitle,
-          type: a.type,
-          reason: 'low_score_vs_top',
-          animeId: a.animeId
-        });
+      const strongIds = new Set(strong.map((a) => a.animeId ?? a.animeTitle));
+      for (const a of kept) {
+        const id = a.animeId ?? a.animeTitle;
+        if (!strongIds.has(id)) {
+          rejected.push({
+            title: a.animeTitle,
+            type: a.type,
+            reason: 'low_score_vs_top',
+            animeId: a.animeId
+          });
+        }
       }
       steps.push({
         step: 'content_score_cut',
         top,
         before: kept.length,
-        after: strong.length
+        after: strong.length,
+        season_preserved: qSeason
       });
       return {
         kept: strong,

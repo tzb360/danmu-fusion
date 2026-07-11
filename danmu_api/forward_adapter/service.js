@@ -173,7 +173,9 @@ export function filterAnimesByIdentity(animes, {
     }
   }
 
-  // 严格季号：有季号的必须等于目标季；无季号合集仅在无严格命中时保留
+  // 严格季号：有季号的必须等于目标季。
+  // 无严格命中时：只保留「标题未标季」的合集；绝不回退到错误季
+  // （线上故障：S4 + 错误候选仅剩 S1/英版S8 时，fallback_or_all 会错配整季弹幕）
   if (season != null) {
     const s = toSeasonNum(season);
     const strict = list.filter(a => {
@@ -188,8 +190,14 @@ export function filterAnimesByIdentity(animes, {
         const extracted = extractSeasonNumberFromAnimeTitle(a.animeTitle || '');
         return extracted.season == null;
       });
-      list = loose.length ? loose : list;
-      steps.push({ step: 'season_number', season: s, count: list.length, mode: 'fallback_or_all' });
+      // 即使 loose 为空也不保留错误季
+      list = loose;
+      steps.push({
+        step: 'season_number',
+        season: s,
+        count: list.length,
+        mode: 'fallback_unspecified_only'
+      });
     }
   }
 
@@ -205,6 +213,8 @@ export function filterAnimesByIdentity(animes, {
   }
 
   // 地区拆分：禁止 US/UK 同批聚合
+  // 指定 region 时：无命中则只保留未标注地区项，绝不静默保留对立地区
+  // （线上故障：美版请求 + 只剩英版时 hit=[] 却继续用英版）
   const wantRegion = normalizeRegion(region);
   if (wantRegion) {
     const hit = list.filter(a => {
@@ -214,6 +224,18 @@ export function filterAnimesByIdentity(animes, {
     if (hit.length) {
       list = hit;
       steps.push({ step: 'region', region: wantRegion, count: list.length });
+    } else {
+      const unk = list.filter(a => {
+        const r = inferRegionFromTitle(a.animeTitle || '', (a.aliases || []).join(' ')).region;
+        return !r;
+      });
+      list = unk;
+      steps.push({
+        step: 'region',
+        region: wantRegion,
+        count: list.length,
+        note: 'no_region_match_keep_unlabeled'
+      });
     }
   } else {
     const byReg = new Map();
@@ -261,6 +283,8 @@ export function filterAnimesByIdentity(animes, {
   }
 
   // 年份：系列年 或 该季年
+  // 已有 season 严格命中时：年份仅软偏好——air year 过滤不得砍光正确季
+  // （Emby 常传系列首播年，S4 的 air year 往往不同）
   if (year) {
     const y = extractYearValue(year);
     if (y) {
@@ -270,9 +294,29 @@ export function filterAnimesByIdentity(animes, {
         const r = inferRegionFromTitle(a.animeTitle || '').region;
         return findSeriesYearForRegion(pool, r) === y;
       });
+      const hasSeasonConstraint = season != null;
       if (yearHit.length && yearHit.length < list.length) {
-        list = yearHit;
-        steps.push({ step: 'year_air', year: y, count: list.length });
+        // 有季号约束时：仅当 yearHit 仍覆盖目标季（或无季号）才收紧
+        if (hasSeasonConstraint) {
+          const s = toSeasonNum(season);
+          const yearHitOk = yearHit.some(a => {
+            const es = extractSeasonNumberFromAnimeTitle(a.animeTitle || '').season;
+            return es == null || Number(es) === s;
+          });
+          if (yearHitOk && yearHit.length > 0) {
+            // 优先 air year，但若 yearHit 全是错误季则跳过（上面 yearHitOk 已保）
+            list = yearHit;
+            steps.push({ step: 'year_air', year: y, count: list.length, mode: 'soft_with_season' });
+          } else if (seriesHit.length) {
+            list = seriesHit;
+            steps.push({ step: 'year_series', year: y, count: list.length, mode: 'soft_with_season' });
+          } else {
+            steps.push({ step: 'year', year: y, count: list.length, mode: 'soft_skip_keep_season' });
+          }
+        } else {
+          list = yearHit;
+          steps.push({ step: 'year_air', year: y, count: list.length });
+        }
       } else if (seriesHit.length && seriesHit.length <= list.length) {
         list = seriesHit;
         steps.push({ step: 'year_series', year: y, count: list.length });
@@ -506,10 +550,12 @@ async function resolveMultiSources(query) {
   }
 
   // 内容消歧：排除同名综艺/赏析/幕后纪实/非主标题引用
+  // 传入 season，避免多季剧在 content_score_cut 阶段被首播年误杀
   const contentQuery = {
     title: query.title || keyword,
     type: query.type || 'unknown',
-    year: query.year || null
+    year: query.year || null,
+    season: season
   };
   const {
     kept: contentKept,

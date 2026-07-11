@@ -74,3 +74,28 @@ test('score prefers exact feature over long junk', () => {
   assert.ok(a.score > 0);
   assert.equal(b.score, -1);
 });
+
+test('multi-season: premiere year + season must keep target season', () => {
+  // Emby/Forward 常传系列首播年 2011 + season=4
+  const animes = [
+    { animeId: 1, animeTitle: '无耻之徒(美版) 第一季(2011)', type: '电视剧', startDate: '2011-01-01' },
+    { animeId: 4, animeTitle: '无耻之徒(美版) 第四季(2014)', type: '电视剧', startDate: '2014-01-01' },
+    { animeId: 8, animeTitle: '无耻之徒(英版) 第八季(2011)', type: '电视剧', startDate: '2011-01-01' },
+    { animeId: 11, animeTitle: '无耻之徒(美版) 第十一季(2020)', type: '电视剧', startDate: '2020-01-01' }
+  ];
+  const { kept } = filterContentCandidates(animes, {
+    title: '无耻之徒',
+    type: 'tv',
+    year: '2011',
+    season: 4
+  });
+  assert.ok(
+    kept.some((a) => a.animeId === 4),
+    'S4 must survive content_score_cut even when query year is series premiere'
+  );
+  const s4 = scoreContentCandidate(animes[1], { title: '无耻之徒', type: 'tv', year: '2011', season: 4 });
+  const ukS8 = scoreContentCandidate(animes[2], { title: '无耻之徒', type: 'tv', year: '2011', season: 4 });
+  const usS1 = scoreContentCandidate(animes[0], { title: '无耻之徒', type: 'tv', year: '2011', season: 4 });
+  assert.ok(s4.score > ukS8.score, 'correct season outranks same-year wrong season');
+  assert.ok(s4.score > usS1.score, 'correct season outranks S1 with premiere year match');
+});
