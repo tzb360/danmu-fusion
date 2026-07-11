@@ -24,6 +24,32 @@ import {
   formatVersionDisplay
 } from './episode-identity.js';
 import { loadEpisodeCache, saveEpisodeCache, listEpisodeCaches, deleteEpisodeCache, getEpisodeCacheDetail } from './episode-cache.js';
+import { limitDanmusByCount } from '../utils/danmu-util.js';
+
+/**
+ * 单源进入清洗前的最大条数。
+ * - DANMU_LIMIT>0 时按 k×1000
+ * - 否则读 AGGREGATE_MAX_PER_SOURCE / EPISODE_AGGREGATE_MAX_RAW
+ * - 再否则默认 40000（1GB VPS 上 bilibili 30万+ 全量清洗会 OOM 崩溃，客户端表现为 0 条）
+ */
+function resolvePerSourceCap() {
+  const k = Number(globals.danmuLimit);
+  if (Number.isFinite(k) && k > 0) return Math.floor(k * 1000);
+  const envCap = Number(process.env.AGGREGATE_MAX_PER_SOURCE || process.env.EPISODE_AGGREGATE_MAX_RAW || 0);
+  if (Number.isFinite(envCap) && envCap > 0) return Math.floor(envCap);
+  return 40000;
+}
+
+/** 等间隔采样，保持时间轴分布 */
+function sampleEvenly(items, maxN) {
+  if (!Array.isArray(items) || items.length <= maxN) return items;
+  const interval = items.length / maxN;
+  const out = new Array(maxN);
+  for (let i = 0; i < maxN; i++) {
+    out[i] = items[Math.floor(i * interval)];
+  }
+  return out;
+}
 
 import RenrenSource from '../sources/renren.js';
 import HanjutvSource from '../sources/hanjutv.js';
@@ -518,6 +544,22 @@ export async function aggregateEpisode(query = {}) {
     };
     log('info', `[EpisodeAggregate][count] source=${fetchResults[i].source} raw=${fetchResults[i].count_raw || 0} title=${s.anime_title || '-'}`);
   }
+
+  // 大体积单源先采样再清洗，避免低内存 VPS 在 processDanmakuMerge 阶段 OOM（进程崩溃=客户端 0 条）
+  const perSourceCap = resolvePerSourceCap();
+  for (const fr of fetchResults) {
+    if (Array.isArray(fr.items) && fr.items.length > perSourceCap) {
+      const before = fr.items.length;
+      fr.items = sampleEvenly(fr.items, perSourceCap);
+      fr.sampled_from = before;
+      fr.sampled_to = fr.items.length;
+      log(
+        'info',
+        `[EpisodeAggregate][sample] source=${fr.source} ${before} -> ${fr.items.length} (cap=${perSourceCap})`
+      );
+    }
+  }
+
   const mergeSources = buildMergeSources(fetchResults);
 
   if (!mergeSources.length) {
@@ -569,6 +611,13 @@ export async function aggregateEpisode(query = {}) {
     return toDandanComment(item);
   });
 
+  // 最终输出再套一次 DANMU_LIMIT（单位 k）；0 时不额外截断
+  const limited = limitDanmusByCount(comments, globals.danmuLimit || 0);
+  if (limited.length !== comments.length) {
+    log('info', `[EpisodeAggregate] DANMU_LIMIT applied ${comments.length} -> ${limited.length}`);
+    comments = limited;
+  }
+
   const sourceMeta = fetchResults.map(fr => {
     const file_name = fr.fileName || buildSourceFileLabel({
       source: fr.source,
@@ -583,6 +632,7 @@ export async function aggregateEpisode(query = {}) {
     return {
       source: fr.source,
       count_raw: fr.count_raw || 0,
+      count_sampled: fr.sampled_to || null,
       weight: fr.weight,
       error: fr.error || null,
       from_cache: Boolean(fr.from_cache),
