@@ -18,8 +18,8 @@ WidgetMetadata = {
   description:
     "Danmu Fusion 是一个弹幕聚合播放模块，需要配套使用 Danmu API 服务。本模块通过专属 Forward API 获取经过聚合、版本匹配和处理后的弹幕数据，为 Emby/Jellyfin 提供稳定的弹幕播放体验。请先部署或连接 Danmu API 后再配置服务地址。",
   author: "tzb360",
-  site: "https://github.com/tzb360/danmu_api",
-  website: "https://github.com/tzb360/danmu_api",
+  site: "https://github.com/tzb360/danmu-fusion",
+  website: "https://github.com/tzb360/danmu-fusion",
   globalParams: [
     {
       name: "danmu_api_url",
