@@ -76,6 +76,7 @@ function renderEpisodeAggregateResult(result) {
         ? detailList.map(function(s) {
             const file = s.file_name || s.fileName || s.raw_file || '-';
             const matched = s.matched_title || s.anime_title || '-';
+            const original = s.original_title || id.original_title || '-';
             const cn = s.title || id.title || '-';
             const region = s.region_label || s.region || id.region_label || id.region || '-';
             const year = s.year || id.year || '-';
@@ -90,12 +91,15 @@ function renderEpisodeAggregateResult(result) {
                 + '<div><strong>匹配 / 聚合关系：</strong></div>'
                 + '<ul style="margin:4px 0 0 16px;">'
                 + '<li>中文名：' + escapeHtml(cn) + '</li>'
-                + '<li>原始名：' + escapeHtml(matched) + '</li>'
+                + '<li>原始名：' + escapeHtml(original) + '</li>'
+                + '<li>原始匹配标题：' + escapeHtml(matched) + '</li>'
                 + '<li>地区：' + escapeHtml(String(region)) + '</li>'
                 + '<li>年份：' + escapeHtml(String(year)) + '</li>'
                 + '<li>类型：' + escapeHtml(se) + '</li>'
                 + '<li>原始条数：' + escapeHtml(String(raw)) + '</li>'
                 + '<li>聚合采用：' + escapeHtml(String(used)) + '</li>'
+                + '<li>状态：' + escapeHtml(String(s.status || '-')) + '</li>'
+                + '<li>最终采用：' + (Number(used) > 0 ? '是' : '否') + '</li>'
                 + (s.match_reason ? '<li>匹配原因：' + escapeHtml(String(s.match_reason)) + '</li>' : '')
                 + (s.error ? '<li style="color:#c00;">错误：' + escapeHtml(s.error) + '</li>' : '')
                 + '</ul></div>';
@@ -202,8 +206,9 @@ async function refreshEpisodeAggregateCache(encodedKey) {
                 original_title: id.original_title || undefined,
                 region: id.region || undefined,
                 year: id.year || undefined,
-                season: id.season || 1,
-                episode: id.episode || 1
+                type: id.is_movie === true || id.type === 'movie' ? 'movie' : 'tv',
+                season: id.is_movie === true || id.type === 'movie' ? undefined : id.season,
+                episode: id.is_movie === true || id.type === 'movie' ? undefined : id.episode
             };
         }
     } catch (e) { /* ignore */ }
@@ -222,8 +227,14 @@ async function refreshEpisodeAggregateCache(encodedKey) {
         if (body.original_title) qs.set('original_title', body.original_title);
         if (body.region) qs.set('region', body.region);
         if (body.year) qs.set('year', body.year);
-        qs.set('season', String(body.season || 1));
-        qs.set('episode', String(body.episode || 1));
+        qs.set('type', body.type || 'tv');
+        if (body.type !== 'movie') {
+            if (!(Number(body.season) > 0) || !(Number(body.episode) > 0)) {
+                throw new Error('电视剧缓存缺少有效 season/episode，拒绝默认刷新 S01E01');
+            }
+            qs.set('season', String(body.season));
+            qs.set('episode', String(body.episode));
+        }
         qs.set('force', '1');
         qs.set('debug', '1');
         const response = await fetch(buildApiUrl('/api/forward/danmaku?' + qs.toString()));

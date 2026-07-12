@@ -51,3 +51,12 @@ test('web panel shows Chinese labels for removal reasons', () => {
   assert(danmakuProcessorJsContent.includes('广告弹幕'));
   assert(danmakuProcessorJsContent.includes('formatRemovalReasonLabel'));
 });
+
+test('episode cache panel preserves media type and never refreshes movies as S01E01', async () => {
+  const { episodeAggregateJsContent } = await import('./ui/js/episodeaggregate.js');
+  assert.match(episodeAggregateJsContent, /qs\.set\('type', body\.type \|\| 'tv'\)/);
+  assert.match(episodeAggregateJsContent, /if \(body\.type !== 'movie'\)/);
+  assert.match(episodeAggregateJsContent, /拒绝默认刷新 S01E01/);
+  assert.match(episodeAggregateJsContent, /最终采用/);
+  assert.match(episodeAggregateJsContent, /原始匹配标题/);
+});
