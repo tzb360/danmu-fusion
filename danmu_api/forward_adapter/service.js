@@ -942,6 +942,11 @@ export async function getForwardDanmaku(queryInput = {}) {
     is_movie: movie
   });
   const { sources, searchMs, animeCount, media, candidates, selected_version } = resolved;
+  const cacheProbe = {
+    hit: false,
+    empty_hit: false,
+    key: null
+  };
 
   // 仅识别：返回候选版本列表（模块负责展示/切换，不在此固定唯一结果）
   if (query.resolve_only) {
@@ -1001,6 +1006,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     type: movie ? 'movie' : 'tv',
     is_movie: movie
   };
+  cacheProbe.key = buildEpisodeIdentity(cacheIdentity).key;
 
   // 带完整 identity 的缓存命中（新 key 含 region/year）
   if (!query.force) {
@@ -1043,13 +1049,44 @@ export async function getForwardDanmaku(queryInput = {}) {
         source_count: (cached.sources || []).length
       });
     }
+    log('info', `[ForwardAdapter][debug] cache miss key=${cacheProbe.key} empty_hit=false`);
   }
 
   if (!sources.length) {
     // 无来源：Forward 不允许「裸单源旁路」，直接空结果 + media
     const emptyMedia = media || buildMatchedMediaMetadata(query, [], resolved.filterSteps || [], []);
+    const emptyMeta = {
+      cached: false,
+      empty_cache_hit: false,
+      key: cacheProbe.key,
+      union_id: query.tmdb_id
+        ? `${query.tmdb_id}_${movie ? 'movie_0_0' : `tv_${season}_${episode}`}`
+        : null,
+      tmdb_id: query.tmdb_id || null,
+      type: movie ? 'movie' : 'tv',
+      title: query.title || null,
+      original_title: query.original_title || null,
+      year: query.year || null,
+      search_keywords: [resolved.keyword].filter(Boolean),
+      provider_candidates: resolved.episodeMatchDebug?.anime_matches || [],
+      anime_count: animeCount,
+      source_count: 0,
+      sources: [],
+      sources_detail: [],
+      filter_steps: resolved.filterSteps || emptyMedia?.filter_steps || [],
+      stats: { total_before: 0, total_after: 0, removed: 0 },
+      final_count: 0
+    };
+    log('info', `[ForwardAdapter][debug] empty ${JSON.stringify(emptyMeta)}`);
     return wrapResult(
-      { count: 0, comments: [], media: slimMedia(emptyMedia) },
+      {
+        count: 0,
+        comments: [],
+        media: slimMedia(emptyMedia),
+        candidates: candidates || [],
+        selected_version: selected_version || null,
+        ...(query.debug ? { meta: emptyMeta } : {})
+      },
       query,
       {
         cached: false,
