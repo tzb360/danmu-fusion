@@ -1100,7 +1100,7 @@ export async function getForwardDanmaku(queryInput = {}) {
         });
       return {
         source: s.source,
-        url: s.url,
+        url: s.url || s.episode_id,
         full_url: s.full_url || s.url,
         episode_id: s.episode_id,
         anime_title: s.anime_title,

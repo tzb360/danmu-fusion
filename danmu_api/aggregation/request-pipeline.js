@@ -158,8 +158,8 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
       region_label: meta.region_label || null,
       year: meta.year || null,
       version_key: meta.version_key || null,
-      season: meta.season || 1,
-      episode: meta.episode || 1,
+      season: meta.is_movie === true || meta.type === 'movie' ? null : (meta.season ?? 1),
+      episode: meta.is_movie === true || meta.type === 'movie' ? null : (meta.episode ?? 1),
       type: meta.type || null,
       is_movie: meta.is_movie === true || meta.isMovie === true
     });
@@ -195,8 +195,8 @@ export async function tryLoadEpisodeCache(meta = {}) {
       region_label: meta.region_label || null,
       year: meta.year || null,
       version_key: meta.version_key || null,
-      season: meta.season || 1,
-      episode: meta.episode || 1,
+      season: meta.is_movie === true || meta.type === 'movie' ? null : (meta.season ?? 1),
+      episode: meta.is_movie === true || meta.type === 'movie' ? null : (meta.episode ?? 1),
       type: meta.type || null,
       is_movie: meta.is_movie === true || meta.isMovie === true
     });

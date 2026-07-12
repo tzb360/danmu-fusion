@@ -273,11 +273,15 @@ export function collectMovieSourcesFromAnimes(animes = [], sourceWeights = {}, o
 
     // 电影：优先取带 url 的全部平台；同一 anime 多 link 时每平台一条
     for (const link of links) {
-      if (!link?.url) continue;
+      if (!link?.url && !link?.id) continue;
       const sourceName = anime.source || 'unknown';
-      const platform = inferPlatformFromUrl(link.url, link.title || sourceName) || sourceName;
-      const parts = parseCompositeUrl(link.url);
-      const candidates = parts.length > 1 ? parts : [{ source: platform, id: link.url, raw: link.url }];
+      const platform = link.url
+        ? (inferPlatformFromUrl(link.url, link.title || sourceName) || sourceName)
+        : sourceName;
+      const parts = link.url ? parseCompositeUrl(link.url) : [];
+      const candidates = parts.length > 1
+        ? parts
+        : [{ source: platform, id: link.url || link.id, raw: link.url || null }];
       for (const part of candidates) {
         const src = part.source || platform;
         const key = `${src}|${part.id || part.raw || link.url}`;
@@ -285,8 +289,10 @@ export function collectMovieSourcesFromAnimes(animes = [], sourceWeights = {}, o
         seen.add(key);
         found.push({
           source: src,
-          url: part.id || part.raw || link.url,
-          full_url: part.raw?.includes?.(':') ? part.raw : (String(link.url).includes(':') ? link.url : `${src}:${link.url}`),
+          url: link.url ? (part.id || part.raw || link.url) : null,
+          full_url: link.url
+            ? (part.raw?.includes?.(':') ? part.raw : (String(link.url).includes(':') ? link.url : `${src}:${link.url}`))
+            : null,
           anime_title: anime.animeTitle || '',
           episode_title: link.title || anime.animeTitle || '',
           weight: resolveSourceWeight(src, order, sourceWeights),

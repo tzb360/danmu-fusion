@@ -13,7 +13,7 @@ import { log } from '../utils/log-util.js';
 import { globals } from '../configs/globals.js';
 
 /** 缓存协议版本：结构变化时抬升，旧缓存自动失效 */
-export const EPISODE_CACHE_VERSION = 2;
+export const EPISODE_CACHE_VERSION = 3;
 
 /**
  * 运行时保护参数（可用环境变量覆盖）

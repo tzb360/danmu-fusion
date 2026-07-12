@@ -1,4 +1,5 @@
 import { simplized } from '../utils/zh-util.js';
+import { EPISODE_CACHE_VERSION } from './source-guard.js';
 
 /**
  * 剧集身份与缓存键
@@ -210,33 +211,34 @@ export function buildEpisodeIdentity(identity = {}) {
     typeHint === 'film';
 
   let key;
+  const schemaPrefix = `cv${EPISODE_CACHE_VERSION}:`;
   if (isMovie) {
     if (tmdbId) {
-      key = `tmdb:${tmdbId}:movie`;
+      key = `${schemaPrefix}tmdb:${tmdbId}:movie:y${year || '0000'}`;
     } else if (imdbId) {
-      key = `imdb:${imdbId}:movie`;
+      key = `${schemaPrefix}imdb:${imdbId}:movie:y${year || '0000'}`;
     } else if (titleKey) {
-      key = `title:${titleKey}:movie:y${year || '0000'}`;
+      key = `${schemaPrefix}title:${titleKey}:movie:y${year || '0000'}`;
     } else if (episodeId) {
-      key = `epid:${episodeId}`;
+      key = `${schemaPrefix}epid:${episodeId}:movie`;
     } else {
       throw new TypeError('movie identity requires title, tmdb_id, or imdb_id');
     }
   } else if (tmdbId) {
     // 电视剧：tmdb + s/e + version
-    key = `tmdb:${tmdbId}:s${season}:e${episode}${verSuffix}`;
+    key = `${schemaPrefix}tmdb:${tmdbId}:tv:s${season}:e${episode}${verSuffix}`;
   } else if (imdbId) {
-    key = `imdb:${imdbId}:s${season}:e${episode}${verSuffix}`;
+    key = `${schemaPrefix}imdb:${imdbId}:tv:s${season}:e${episode}${verSuffix}`;
   } else if (titleKey) {
     const regPart = region || 'unk';
     const yearPart = year || '0000';
     if (version_key) {
-      key = `title:${titleKey}:s${season}:e${episode}${verSuffix}`;
+      key = `${schemaPrefix}title:${titleKey}:tv:s${season}:e${episode}${verSuffix}`;
     } else {
-      key = `title:${titleKey}:r${regPart}:y${yearPart}:s${season}:e${episode}`;
+      key = `${schemaPrefix}title:${titleKey}:tv:r${regPart}:y${yearPart}:s${season}:e${episode}`;
     }
   } else if (episodeId) {
-    key = `epid:${episodeId}`;
+    key = `${schemaPrefix}epid:${episodeId}:tv:s${season}:e${episode}`;
   } else {
     throw new TypeError('identity requires title, tmdb_id, imdb_id, or episode_id');
   }

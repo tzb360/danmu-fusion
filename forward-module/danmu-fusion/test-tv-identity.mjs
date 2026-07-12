@@ -198,6 +198,20 @@ const d = t.resolveIdentity({
 assert.equal(d.isMovie, false);
 assert.equal(d.episode, 3);
 
+// unionId 是唯一可信身份：陈旧播放器字段不得覆盖当前集
+const stalePlayerFields = t.resolveIdentity({
+  seriesName: '无耻之徒',
+  unionId: '34307_tv_5_3',
+  season: 5,
+  episode: 1,
+  ParentIndexNumber: 4,
+  IndexNumber: 12
+});
+assert.equal(stalePlayerFields.season, 5);
+assert.equal(stalePlayerFields.episode, 3);
+assert.equal(stalePlayerFields.seasonSource, 'unionId');
+assert.equal(stalePlayerFields.episodeSource, 'unionId');
+
 // 仅 unionId 电影（无 type 字段）
 const e = t.resolveIdentity({
   title: '007：大战皇家赌场',

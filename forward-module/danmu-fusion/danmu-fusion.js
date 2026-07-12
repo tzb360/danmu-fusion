@@ -561,9 +561,9 @@ function formatSE(season, episode) {
 /**
  * 电视剧专用：从播放器 params 解析 season/episode。
  * 优先级（高→低）：
- *   1) 显式 episode / season 字段（播放器权威）
- *   2) IndexNumber / ParentIndexNumber
- *   3) unionId（如 34307_tv_5_3）
+ *   1) unionId（如 34307_tv_5_3，唯一权威）
+ *   2) 显式 episode / season 字段（仅无 unionId 时）
+ *   3) IndexNumber / ParentIndexNumber（仅无 unionId 时）
  *   4) 路径/标题 SxxExx
  *   5) 合成 episodeId
  *   6) animeId 内嵌（仅缺省时）
@@ -604,6 +604,22 @@ function resolveSeasonEpisode(p, isMovie) {
   let episode = null;
   let seasonSource = "missing";
   let episodeSource = "missing";
+
+  const unionRaw = firstPresent(p, [
+    "unionId", "union_id", "mediaId", "MediaId", "itemId", "ItemId"
+  ]);
+  const fromUnion = parseUnionOrMediaId(unionRaw);
+  if (fromUnion && !fromUnion.isMovie && fromUnion.season > 0 && fromUnion.episode > 0) {
+    return {
+      season: fromUnion.season,
+      episode: fromUnion.episode,
+      seasonSource: "unionId",
+      episodeSource: "unionId",
+      hasPlayerSeason: true,
+      hasPlayerEpisode: true,
+      raw: rawSnap
+    };
+  }
 
   // 1) 显式字段
   const s1 = toInt(
@@ -657,15 +673,7 @@ function resolveSeasonEpisode(p, isMovie) {
   }
 
   // 3) unionId 34307_tv_5_3 —— 播放器权威信号
-  const unionRaw = firstPresent(p, [
-    "unionId",
-    "union_id",
-    "mediaId",
-    "MediaId",
-    "itemId",
-    "ItemId"
-  ]);
-  const fromUnion = parseUnionOrMediaId(unionRaw);
+  // unionId 缺失或无合法季集时，才允许兼容旧播放器字段。
   if (fromUnion && !fromUnion.isMovie) {
     if (fromUnion.season != null && (season == null || seasonSource === "missing")) {
       season = fromUnion.season;
