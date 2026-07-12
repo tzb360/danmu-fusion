@@ -122,7 +122,32 @@ export function buildSourceFileLabel({
 }
 
 /**
+ * 版本后缀：缓存必须绑定 version，禁止 title/tmdb 固定唯一结果后跨版串弹幕。
+ * 优先 version_key（如 us:2011:s4），否则 region+year。
+ */
+export function buildVersionSuffix(identity = {}, region = null, year = null) {
+  const vk = identity.version_key || identity.versionKey || null;
+  if (vk != null && String(vk).trim() !== '') {
+    const safe = String(vk)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9:._-]+/g, '_')
+      .slice(0, 64);
+    return `:v${safe}`;
+  }
+  const regPart = normalizeRegion(region) || null;
+  const yearPart = extractYearValue(year) || null;
+  if (regPart || yearPart) {
+    return `:r${regPart || 'unk'}:y${yearPart || '0000'}`;
+  }
+  return '';
+}
+
+/**
  * @param {object} identity
+ * 缓存键绑定：id + season + episode + version
+ * - 电影：可无 version 后缀（唯一匹配）
+ * - 电视剧：有 region/year/version_key 时必须写入，防止美/英同集串缓存
  */
 export function buildEpisodeIdentity(identity = {}) {
   const { season, episode } = normalizeSeasonEpisode(identity.season, identity.episode);
@@ -146,18 +171,31 @@ export function buildEpisodeIdentity(identity = {}) {
   }
   const region_label = identity.region_label || regionLabel(region);
   const year = extractYearValue(identity.year || identity.series_year || identity.seriesYear);
+  const version_key =
+    identity.version_key != null && String(identity.version_key).trim() !== ''
+      ? String(identity.version_key).trim()
+      : null;
+  const verSuffix = buildVersionSuffix(
+    { version_key },
+    region,
+    year
+  );
 
   let key;
   if (tmdbId) {
-    // TMDB 已区分版本，仍写入 s/e
-    key = `tmdb:${tmdbId}:s${season}:e${episode}`;
+    // tmdb + s/e + version（同 tmdb 下也可能有多版本候选时靠 version 拆开）
+    key = `tmdb:${tmdbId}:s${season}:e${episode}${verSuffix}`;
   } else if (imdbId) {
-    key = `imdb:${imdbId}:s${season}:e${episode}`;
+    key = `imdb:${imdbId}:s${season}:e${episode}${verSuffix}`;
   } else if (titleKey) {
-    // 必须含 region + year，防止美/英同名同季同集串缓存
+    // 必须含 region + year / version_key，防止美/英同名同季同集串缓存
     const regPart = region || 'unk';
     const yearPart = year || '0000';
-    key = `title:${titleKey}:r${regPart}:y${yearPart}:s${season}:e${episode}`;
+    if (version_key) {
+      key = `title:${titleKey}:s${season}:e${episode}${verSuffix}`;
+    } else {
+      key = `title:${titleKey}:r${regPart}:y${yearPart}:s${season}:e${episode}`;
+    }
   } else if (episodeId) {
     key = `epid:${episodeId}`;
   } else {
@@ -172,6 +210,7 @@ export function buildEpisodeIdentity(identity = {}) {
     region: region || null,
     region_label: region_label || null,
     year: year || null,
+    version_key: version_key || null,
     tmdb_id: tmdbId,
     imdb_id: imdbId,
     season,

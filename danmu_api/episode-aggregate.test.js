@@ -12,6 +12,30 @@ test('episode identity prefers tmdb key', () => {
   assert.equal(id.episode, 3);
 });
 
+test('episode identity binds version for same tmdb', () => {
+  const us = buildEpisodeIdentity({
+    title: '无耻之徒',
+    tmdb_id: '34307',
+    season: 4,
+    episode: 12,
+    region: 'us',
+    year: '2011',
+    version_key: 'us:2011:s4'
+  });
+  const uk = buildEpisodeIdentity({
+    title: '无耻之徒',
+    tmdb_id: '34307',
+    season: 4,
+    episode: 12,
+    region: 'uk',
+    year: '2004',
+    version_key: 'uk:2004:s4'
+  });
+  assert.equal(us.key, 'tmdb:34307:s4:e12:vus:2011:s4');
+  assert.equal(uk.key, 'tmdb:34307:s4:e12:vuk:2004:s4');
+  assert.notEqual(us.key, uk.key);
+});
+
 test('episode identity falls back to normalized title', () => {
   const id = buildEpisodeIdentity({ title: '生 万 物', season: 2, episode: 1 });
   assert.ok(id.key.startsWith('title:'));

@@ -28,6 +28,11 @@ import {
 import { filterContentCandidates } from '../aggregation/content-filter.js';
 import { extractSeasonNumberFromAnimeTitle } from '../utils/common-util.js';
 import {
+  buildVersionCandidates,
+  slimCandidate,
+  pickCandidate
+} from './version-candidates.js';
+import {
   buildForwardDanmakuPayload,
   toPlayerXml,
   toPlayerAss,
@@ -83,6 +88,8 @@ export function parseForwardQuery(urlOrObject = {}) {
     episode: get(['episode', 'e', 'ep', 'episodeNumber', 'EpisodeNumber', 'IndexNumber'], 1),
     episode_id: get(['episode_id', 'comment_id', 'commentId', 'episodeId'], null),
     anime_id: get(['anime_id', 'animeId'], null),
+    // 用户/模块选择的版本键，如 us:2011:s4
+    version_key: get(['version_key', 'versionKey', 'version'], null),
     type: get(['type'], 'tv'),
     force: asBool(get(['force', 'refresh'], 'false')),
     format: String(get(['format'], 'json')).toLowerCase(),
@@ -551,7 +558,6 @@ async function resolveMultiSources(query) {
   }
 
   // 内容消歧：排除同名综艺/赏析/幕后纪实/非主标题引用
-  // 传入 season，避免多季剧在 content_score_cut 阶段被首播年误杀
   const contentQuery = {
     title: query.title || keyword,
     type: query.type || 'unknown',
@@ -574,35 +580,69 @@ async function resolveMultiSources(query) {
     `[ForwardAdapter] content filter ${detailed.length} -> ${contentKept.length} (rejected ${contentRejected.length})`
   );
 
-  // 结构化筛选：季号 + 集数容量 + 地区拆分 + 系列年
-  const { animes: filtered, steps: identitySteps } = filterAnimesByIdentity(contentKept, {
+  // —— 架构：先构建多版本候选，再由 version_key/region 选择（不在模块侧固定版本）——
+  const versionBundle = buildVersionCandidates(contentKept, {
+    title: query.title || keyword,
     season,
     episode,
     year: query.year,
-    tmdb_id: query.tmdb_id,
-    imdb_id: query.imdb_id,
-    tvdb_id: query.tvdb_id,
     region: query.region,
-    allAnimes: contentKept
+    type: query.type
   });
-  const filterSteps = [...(contentSteps || []), ...(identitySteps || [])];
+  const candidates = versionBundle.candidates || [];
+  const selected = pickCandidate(candidates, {
+    version_key: query.version_key,
+    region: query.region
+  });
 
-  const media = buildMatchedMediaMetadata(query, filtered, filterSteps, contentKept);
+  const filtered = selected?._animes || [];
+  const filterSteps = [
+    ...(contentSteps || []),
+    ...(versionBundle.steps || []),
+    {
+      step: 'version_select',
+      version_key: selected?.version_key || null,
+      from_query: query.version_key || null,
+      candidates: candidates.length
+    }
+  ];
+
+  // 用选中版本覆盖 region/year 再生成 media 展示
+  const mediaQuery = {
+    ...query,
+    region: selected?.region || query.region,
+    year: selected?.year || query.year
+  };
+  const media = buildMatchedMediaMetadata(mediaQuery, filtered, filterSteps, contentKept);
+  if (selected) {
+    media.display = selected.display;
+    media.region = selected.region;
+    media.region_label = selected.region_label;
+    media.year = selected.year;
+    media.version_key = selected.version_key;
+    media.season = season;
+    media.episode = episode;
+  }
+
   log(
     'info',
-    `[ForwardAdapter] identity filter ${contentKept.length} -> ${filtered.length}; display="${media.display}" region=${media.region}`
+    `[ForwardAdapter] version selected="${selected?.version_key || '-'}" ` +
+      `display="${media.display}" candidates=${candidates.length} ` +
+      `animes=${filtered.length}`
   );
 
-  // 严格按输入 episode 精确匹配分集链接；禁止 nearest 回退
-  const episodeMatchDebug = {};
-  const sources = collectEpisodeSourcesFromAnimes(filtered, episode, {}, {
-    strict: true,
-    debugOut: episodeMatchDebug
-  });
+  // 严格 episode 源：优先用候选里已收集的；否则再收集
+  let rawSources = selected?._sources || [];
+  const episodeMatchDebug = selected?._episode_match || {};
+  if (!rawSources.length && filtered.length) {
+    rawSources = collectEpisodeSourcesFromAnimes(filtered, episode, {}, {
+      strict: true,
+      debugOut: episodeMatchDebug
+    });
+  }
 
-  // 平台去重，最多 8 源；附带版本元数据
   const byPlat = new Map();
-  for (const s of sources) {
+  for (const s of rawSources) {
     const k = String(s.source || 'unknown').toLowerCase();
     if (!byPlat.has(k)) {
       byPlat.set(k, {
@@ -624,42 +664,10 @@ async function resolveMultiSources(query) {
       });
     }
   }
-  const deduped = [...byPlat.values()].slice(0, 8);
+  const strictSources = [...byPlat.values()]
+    .filter((s) => s.matched_episode == null || Number(s.matched_episode) === Number(episode))
+    .slice(0, 8);
 
-  // 校验：每个源的 matched_episode 必须等于输入 episode
-  for (const s of deduped) {
-    if (s.matched_episode != null && Number(s.matched_episode) !== Number(episode)) {
-      log(
-        'error',
-        `[ForwardAdapter] EPISODE_MISMATCH reject source=${s.source} ` +
-          `want=E${episode} got=E${s.matched_episode} title=${s.episode_title}`
-      );
-    }
-  }
-  const strictSources = deduped.filter(
-    (s) => s.matched_episode == null || Number(s.matched_episode) === Number(episode)
-  );
-
-  log(
-    'info',
-    `[ForwardAdapter] episode_match input=S${season}E${episode} ` +
-      `sources=${strictSources.length} [${strictSources.map((s) => `${s.source}:${s.episode_title || s.fileName}`).join(' | ')}]`
-  );
-  log(
-    'info',
-    `[ForwardAdapter] episode_match_debug ${JSON.stringify({
-      input_episode: episode,
-      policy: episodeMatchDebug.policy,
-      selected: episodeMatchDebug.selected_sources,
-      per_anime: (episodeMatchDebug.anime_matches || []).map((a) => ({
-        title: a.anime_title,
-        chosen: a.chosen,
-        top: (a.candidates || []).slice(0, 8)
-      }))
-    })}`
-  );
-
-  // 挂到 media 便于 debug 响应
   media.episode_match = {
     input_season: season,
     input_episode: episode,
@@ -672,11 +680,18 @@ async function resolveMultiSources(query) {
     })),
     debug: episodeMatchDebug
   };
+  media.version_key = selected?.version_key || null;
+  media.candidates_count = candidates.length;
+
+  const slimList = candidates.map(slimCandidate);
 
   return {
     sources: strictSources,
     animes: filtered,
     allCandidates: detailed,
+    versionCandidates: candidates,
+    candidates: slimList,
+    selected_version: selected?.version_key || null,
     keyword,
     season,
     episode,
@@ -730,41 +745,51 @@ export async function getForwardDanmaku(queryInput = {}) {
     log('info', `[ForwardAdapter] episode_id=${query.episode_id} noted; still force aggregate path`);
   }
 
-  // —— 搜索 + 收集全部来源 + 聚合清洗 ——
+  // —— 搜索 + 版本候选 +（可选）聚合 ——
   const resolved = await resolveMultiSources({ ...query, season, episode, title: titleHint });
-  const { sources, searchMs, animeCount, media } = resolved;
+  const { sources, searchMs, animeCount, media, candidates, selected_version } = resolved;
 
-  // 仅识别：返回完整 metadata，count=0
+  // 仅识别：返回候选版本列表（模块负责展示/切换，不在此固定唯一结果）
   if (query.resolve_only) {
     const elapsed = Date.now() - started;
-    log('info', `[ForwardAdapter] resolve_only display="${media?.display || '-'}" matched=${media?.matched_count || 0} ${elapsed}ms`);
+    log(
+      'info',
+      `[ForwardAdapter] resolve_only display="${media?.display || '-'}" ` +
+        `candidates=${(candidates || []).length} selected=${selected_version || '-'} ${elapsed}ms`
+    );
     const payload = {
       count: 0,
       comments: [],
       media: slimMedia(media),
-      meta: query.debug
-        ? {
-            resolve_only: true,
-            media,
-            filter_steps: resolved.filterSteps || media?.filter_steps || [],
-            processing_ms: elapsed,
-            search_ms: searchMs,
-            anime_count: animeCount,
-            source_count: sources.length
-          }
-        : undefined
+      // 始终返回 candidates，供 Forward 模块做版本切换
+      candidates: candidates || [],
+      selected_version: selected_version || null
     };
-    if (!query.debug) delete payload.meta;
+    if (query.debug) {
+      payload.meta = {
+        resolve_only: true,
+        media,
+        candidates,
+        selected_version,
+        filter_steps: resolved.filterSteps || media?.filter_steps || [],
+        processing_ms: elapsed,
+        search_ms: searchMs,
+        anime_count: animeCount,
+        source_count: sources.length
+      };
+    }
     return wrapResult(payload, query, {
       cached: false,
       resolve_only: true,
       processing_ms: elapsed,
       media,
+      candidates,
+      selected_version,
       source_count: sources.length
     });
   }
 
-  // Forward 专属：强制走聚合缓存（strict_sources，禁止二次宽松发现单源旁路）
+  // Forward 专属：强制走聚合缓存（缓存键绑定 tmdb + s/e + version）
   cacheIdentity = {
     title: media?.title || query.title || titleHint,
     original_title: media?.original_title || query.original_title || null,
@@ -773,6 +798,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     region: media?.region || query.region || null,
     region_label: media?.region_label || null,
     year: media?.year || query.year || null,
+    version_key: selected_version || media?.version_key || query.version_key || null,
     season,
     episode
   };
@@ -803,6 +829,8 @@ export async function getForwardDanmaku(queryInput = {}) {
         forceScroll: query.force_scroll
       });
       payload.media = slimMedia(media);
+      payload.candidates = candidates || [];
+      payload.selected_version = selected_version || media?.version_key || null;
       payload.sources_detail = query.debug ? (cached.sources || []) : undefined;
       return wrapResult(payload, query, {
         cached: true,
@@ -811,6 +839,8 @@ export async function getForwardDanmaku(queryInput = {}) {
         stats: cached.stats,
         processing_ms: elapsed,
         media,
+        candidates,
+        selected_version,
         source_count: (cached.sources || []).length
       });
     }
@@ -840,6 +870,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     region: cacheIdentity.region,
     region_label: cacheIdentity.region_label,
     year: cacheIdentity.year,
+    version_key: cacheIdentity.version_key || null,
     season,
     episode,
     force: query.force === true,
@@ -911,8 +942,13 @@ export async function getForwardDanmaku(queryInput = {}) {
   payload.count = comments.length;
   payload.comments = comments;
   payload.media = slimMedia(media);
+  // 始终返回候选版本，便于模块切换
+  payload.candidates = candidates || [];
+  payload.selected_version = selected_version || media?.version_key || null;
   if (query.debug) {
     payload.sources_detail = sourcesDetail;
+    meta.candidates = candidates;
+    meta.selected_version = selected_version;
   }
 
   return wrapResult(payload, query, {
@@ -922,7 +958,9 @@ export async function getForwardDanmaku(queryInput = {}) {
     stats: meta.stats,
     processing_ms: elapsed,
     source_count: sourcesDetail.length,
-    media
+    media,
+    candidates,
+    selected_version
   });
 }
 
@@ -944,7 +982,8 @@ function slimMedia(media) {
     season: media.season ?? null,
     episode: media.episode ?? null,
     display_title: media.display_title ?? null,
-    display: media.display ?? null
+    display: media.display ?? null,
+    version_key: media.version_key ?? null
   };
 }
 
