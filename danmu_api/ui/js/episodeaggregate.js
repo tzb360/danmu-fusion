@@ -19,18 +19,27 @@ async function loadEpisodeAggregateList() {
         listEl.innerHTML = items.map(item => {
             const id = item.identity || {};
             const title = item.display || id.display || id.title || id.tmdb_id || item.key;
-            const se = 'S' + String(id.season || '?').padStart(2,'0') + 'E' + String(id.episode || '?').padStart(2,'0');
+            const isMovie = id.is_movie === true || id.type === 'movie' || String(item.key || '').endsWith(':movie') || String(item.key || '').includes('_movie');
+            // 电影禁止展示假 SxxExx；电视剧显示季集
+            const typeTag = isMovie
+                ? '电影'
+                : ('S' + String(id.season || '?').padStart(2,'0') + 'E' + String(id.episode || '?').padStart(2,'0'));
             const reg = id.region_label || id.region || '';
             const year = id.year || '';
-            const srcPreview = (item.sources_summary || []).slice(0, 3).map(function(s) {
-                return escapeHtml(s.source) + (s.file_name ? ' · ' + escapeHtml(s.file_name) : '');
-            }).join('<br>') || '-';
+            // 来源预览：provider · 原始文件名 · 数量
+            const srcPreview = (item.sources_summary || []).slice(0, 5).map(function(s) {
+                const file = s.file_name || s.fileName || s.raw_file || '';
+                const cnt = (s.count_raw != null ? s.count_raw : (s.count_used != null ? s.count_used : ''));
+                return escapeHtml(s.provider || s.source || 'unknown')
+                    + (file ? ' · ' + escapeHtml(file) : '')
+                    + (cnt !== '' ? ' · ' + escapeHtml(String(cnt)) : '');
+            }).join('<br>') || '<span style="color:#c00">无来源明细</span>';
             return '<div class="episode-agg-card" data-key="' + escapeHtml(item.key) + '">'
                 + '<div class="episode-agg-main">'
                 + '<strong>' + escapeHtml(title) + '</strong> '
+                + '<span class="tag">' + escapeHtml(typeTag) + '</span> '
                 + (reg ? '<span class="tag">' + escapeHtml(reg) + '</span> ' : '')
                 + (year ? '<span class="tag">' + escapeHtml(String(year)) + '</span> ' : '')
-                + '<span class="tag">' + escapeHtml(se) + '</span>'
                 + '<div class="muted-text">' + escapeHtml(item.key) + '</div>'
                 + '<div class="episode-agg-metrics">'
                 + '<span>来源 ' + escapeHtml(item.source_count || 0) + '</span>'
@@ -62,6 +71,7 @@ function renderEpisodeAggregateResult(result) {
         : '<li>无</li>';
 
     const detailList = result.sources_detail || result.sources || [];
+    const isMovie = id.is_movie === true || id.type === 'movie' || String(result.key || '').includes(':movie');
     const sourcesHtml = detailList.length
         ? detailList.map(function(s) {
             const file = s.file_name || s.fileName || s.raw_file || '-';
@@ -69,28 +79,34 @@ function renderEpisodeAggregateResult(result) {
             const cn = s.title || id.title || '-';
             const region = s.region_label || s.region || id.region_label || id.region || '-';
             const year = s.year || id.year || '-';
-            const se = 'S' + String(s.season || id.season || '?') + 'E' + String(s.episode || id.episode || '?');
+            const se = isMovie
+                ? '电影（无季集）'
+                : ('S' + String(s.season || id.season || '?') + 'E' + String(s.episode || id.episode || '?'));
+            const raw = s.count_raw ?? s.count ?? 0;
+            const used = s.count_used ?? '-';
             return '<div class="source-detail-card" style="border:1px solid #e0e0e0;border-radius:8px;padding:12px;margin:8px 0;">'
-                + '<div><strong>来源：</strong>' + escapeHtml(s.source || 'unknown') + '</div>'
+                + '<div><strong>来源 Provider：</strong>' + escapeHtml(s.provider || s.source || 'unknown') + '</div>'
                 + '<div><strong>原始弹幕文件：</strong><code>' + escapeHtml(file) + '</code></div>'
-                + '<div><strong>匹配信息：</strong></div>'
+                + '<div><strong>匹配 / 聚合关系：</strong></div>'
                 + '<ul style="margin:4px 0 0 16px;">'
                 + '<li>中文名：' + escapeHtml(cn) + '</li>'
                 + '<li>原始名：' + escapeHtml(matched) + '</li>'
                 + '<li>地区：' + escapeHtml(String(region)) + '</li>'
                 + '<li>年份：' + escapeHtml(String(year)) + '</li>'
-                + '<li>季集：' + escapeHtml(se) + '</li>'
-                + '<li>数量：' + escapeHtml(String(s.count_raw ?? s.count ?? 0)) + '</li>'
+                + '<li>类型：' + escapeHtml(se) + '</li>'
+                + '<li>原始条数：' + escapeHtml(String(raw)) + '</li>'
+                + '<li>聚合采用：' + escapeHtml(String(used)) + '</li>'
+                + (s.match_reason ? '<li>匹配原因：' + escapeHtml(String(s.match_reason)) + '</li>' : '')
                 + (s.error ? '<li style="color:#c00;">错误：' + escapeHtml(s.error) + '</li>' : '')
                 + '</ul></div>';
         }).join('')
-        : '<p class="muted-text">无来源明细</p>';
+        : '<p class="muted-text" style="color:#c00">无来源明细（source metadata 缺失）</p>';
 
     const matchLine = result.display || id.display || [
         id.title || '',
         id.region_label || id.region || '',
         id.year || '',
-        'S' + (id.season || '?') + 'E' + (id.episode || '?')
+        isMovie ? '电影' : ('S' + (id.season || '?') + 'E' + (id.episode || '?'))
     ].filter(Boolean).join(' ');
 
     box.innerHTML = '<div class="processor-panel">'

@@ -679,26 +679,35 @@ async function resolveMultiSources(query) {
     for (const s of rawSources) {
       const k = String(s.source || 'unknown').toLowerCase();
       if (!byPlat.has(k)) {
+        // 文件名用清洗后的片名/原名，不用带【电影】from xxx 的原始 animeTitle
+        const cleanTitle = media.title || media.matched_anime_title || s.anime_title;
+        const fileName = buildSourceFileLabel({
+          source: s.source,
+          original_title: media.original_title,
+          title: cleanTitle,
+          region: media.region,
+          year: media.year,
+          season: null,
+          episode: null,
+          url: s.url,
+          type: 'movie',
+          is_movie: true
+        });
         byPlat.set(k, {
           ...s,
           region: media.region,
           year: media.year,
           original_title: media.original_title,
           anime_title: s.anime_title || media.matched_anime_title || media.title,
-          fileName: buildSourceFileLabel({
-            source: s.source,
-            original_title: media.original_title,
-            title: media.title,
-            region: media.region,
-            year: media.year,
-            season: null,
-            episode: null,
-            url: s.url
-          })
+          fileName,
+          file_name: fileName,
+          match_reason: s.match_reason || 'movie_full',
+          matched_episode: null,
+          type: 'movie'
         });
       }
     }
-    // 电影：不过滤 matched_episode，全部平台源可用
+    // 电影：不过滤 matched_episode，每平台一条全片源
     const movieSources = [...byPlat.values()].slice(0, 8);
 
     media.episode_match = {
@@ -1065,25 +1074,47 @@ export async function getForwardDanmaku(queryInput = {}) {
     region_label: cacheIdentity.region_label,
     year: cacheIdentity.year,
     version_key: cacheIdentity.version_key || null,
-    season: movie ? 1 : season, // aggregate 内部仍需占位；缓存键已用 type=movie 区分
-    episode: movie ? 1 : episode,
+    // 电影：season/episode 必须为 null，禁止假 S01E01 污染来源文件名
+    season: movie ? null : season,
+    episode: movie ? null : episode,
     type: movie ? 'movie' : 'tv',
     is_movie: movie,
     force: query.force === true,
     timeline: true,
     strict_sources: true,
-    sources: sources.map(s => ({
-      source: s.source,
-      url: s.url,
-      full_url: s.full_url || s.url,
-      episode_id: s.episode_id,
-      anime_title: s.anime_title,
-      episode_title: s.episode_title,
-      fileName: s.fileName,
-      region: s.region || cacheIdentity.region,
-      year: s.year || cacheIdentity.year,
-      original_title: s.original_title || cacheIdentity.original_title
-    }))
+    sources: sources.map((s) => {
+      const fileName =
+        s.fileName ||
+        s.file_name ||
+        buildSourceFileLabel({
+          source: s.source,
+          original_title: s.original_title || cacheIdentity.original_title,
+          title: s.anime_title || cacheIdentity.title,
+          region: s.region || cacheIdentity.region,
+          year: s.year || cacheIdentity.year,
+          season: movie ? null : season,
+          episode: movie ? null : episode,
+          url: s.url,
+          type: movie ? 'movie' : 'tv',
+          is_movie: movie
+        });
+      return {
+        source: s.source,
+        url: s.url,
+        full_url: s.full_url || s.url,
+        episode_id: s.episode_id,
+        anime_title: s.anime_title,
+        episode_title: s.episode_title,
+        fileName,
+        file_name: fileName,
+        region: s.region || cacheIdentity.region,
+        year: s.year || cacheIdentity.year,
+        original_title: s.original_title || cacheIdentity.original_title,
+        match_reason: s.match_reason || (movie ? 'movie_full' : null),
+        matched_episode: movie ? null : s.matched_episode,
+        type: movie ? 'movie' : 'tv'
+      };
+    })
   });
 
   let comments = toPlayerComments(agg.comments || []);

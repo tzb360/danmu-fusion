@@ -85,7 +85,10 @@ export function extractYearValue(v) {
 
 /**
  * 构造可落盘文件名风格的「原始弹幕文件」展示名
- * 例：Shameless.US.2011.S04E10.xml
+ * 电视剧例：Shameless.US.2011.S04E10.xml
+ * 电影例：Casino.Royale.2006.xml（禁止假 S01E01）
+ *
+ * 规则：仅当 season>0 且 episode>0 时附加 SxxExx；电影/无季集不附加。
  */
 export function buildSourceFileLabel({
   source,
@@ -95,24 +98,38 @@ export function buildSourceFileLabel({
   year,
   season,
   episode,
-  url
+  url,
+  type,
+  is_movie
 } = {}) {
-  const se = `S${String(season || 1).padStart(2, '0')}E${String(episode || 1).padStart(2, '0')}`;
+  const movie =
+    is_movie === true ||
+    String(type || '').toLowerCase() === 'movie' ||
+    String(type || '').toLowerCase() === 'movies';
+  const sNum = Number(season);
+  const eNum = Number(episode);
+  const hasSE =
+    !movie && Number.isFinite(sNum) && sNum > 0 && Number.isFinite(eNum) && eNum > 0;
+
   const base =
     (original_title && String(original_title).trim()) ||
     (title && String(title).trim()) ||
-    'episode';
+    (movie ? 'movie' : 'episode');
   const safeBase = String(base)
     .replace(/[^\w\u4e00-\u9fa5.\-]+/g, '.')
     .replace(/\.+/g, '.')
     .replace(/^\.|\.$/g, '')
-    .slice(0, 80) || 'episode';
+    .slice(0, 80) || (movie ? 'movie' : 'episode');
   const reg = normalizeRegion(region);
   const y = extractYearValue(year);
   const parts = [safeBase];
   if (reg) parts.push(reg.toUpperCase());
   if (y) parts.push(y);
-  parts.push(se);
+  if (hasSE) {
+    parts.push(
+      `S${String(sNum).padStart(2, '0')}E${String(eNum).padStart(2, '0')}`
+    );
+  }
   let name = parts.join('.') + '.xml';
   // 若有真实 url 短 id 可附带
   if (url && String(url).length < 40 && !String(url).includes('://')) {

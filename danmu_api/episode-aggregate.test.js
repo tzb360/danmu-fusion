@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEpisodeIdentity, resolveSourceWeight, normalizeTitle } from './aggregation/episode-identity.js';
+import { buildEpisodeIdentity, resolveSourceWeight, normalizeTitle, buildSourceFileLabel } from './aggregation/episode-identity.js';
 import { collectEpisodeSourcesFromAnimes, aggregateEpisode, discoverEpisodeSources } from './aggregation/episode-service.js';
 import { saveEpisodeCache, loadEpisodeCache, listEpisodeCaches, deleteEpisodeCache } from './aggregation/episode-cache.js';
 import { Globals } from './configs/globals.js';
@@ -50,6 +50,22 @@ test('movie identity has no season/episode in key', () => {
   assert.equal(m.season, null);
   assert.equal(m.episode, null);
   assert.equal(m.is_movie, true);
+});
+
+test('movie source file label has no S01E01', () => {
+  const name = buildSourceFileLabel({
+    original_title: 'Casino Royale',
+    title: '007：大战皇家赌场',
+    year: '2006',
+    type: 'movie',
+    is_movie: true,
+    season: 0,
+    episode: 0,
+    source: 'bilibili'
+  });
+  assert.ok(!/S\d+E\d+/i.test(name), name);
+  assert.ok(name.includes('2006'), name);
+  assert.ok(name.endsWith('.xml'), name);
 });
 
 test('episode identity falls back to normalized title', () => {

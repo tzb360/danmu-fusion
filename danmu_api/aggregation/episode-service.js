@@ -432,17 +432,34 @@ export function discoverEpisodeSources(identity, options = {}) {
   const episode = identity.episode || 1;
   const title = identity.title || '';
 
-  // Forward 专属：只信调用方已版本校验过的 sources 列表
+  // Forward 专属：只信调用方已校验过的 sources 列表（movie/tv 均走此路径）
   if (options.strict_sources && Array.isArray(options.sources) && options.sources.length) {
+    const isMovie = identity.is_movie === true || identity.type === 'movie';
     for (const s of options.sources) {
       const source = s.source || s.platform || 'upload';
+      const fileName =
+        s.fileName ||
+        s.file_name ||
+        buildSourceFileLabel({
+          source,
+          original_title: s.original_title || identity.original_title,
+          title: s.anime_title || title,
+          region: s.region || identity.region,
+          year: s.year || identity.year,
+          season: isMovie ? null : identity.season,
+          episode: isMovie ? null : identity.episode,
+          url: s.url || s.id || '',
+          type: isMovie ? 'movie' : 'tv',
+          is_movie: isMovie
+        });
       sources.push({
         source,
         url: s.url || s.id || '',
-        full_url: s.url || s.id || s.full_url || '',
+        full_url: s.full_url || s.url || s.id || '',
         data: s.data || s.comments || null,
         content: s.content || null,
-        fileName: s.fileName || s.file_name || null,
+        fileName,
+        file_name: fileName,
         anime_title: s.anime_title || title,
         episode_title: s.episode_title || '',
         weight: resolveSourceWeight(source, globals.sourceOrderArr, weights),
@@ -450,8 +467,11 @@ export function discoverEpisodeSources(identity, options = {}) {
         region: s.region || identity.region || null,
         year: s.year || identity.year || null,
         original_title: s.original_title || identity.original_title || null,
-        season: identity.season,
-        episode: identity.episode
+        season: isMovie ? null : identity.season,
+        episode: isMovie ? null : identity.episode,
+        match_reason: s.match_reason || (isMovie ? 'movie_full' : null),
+        matched_episode: isMovie ? null : (s.matched_episode ?? identity.episode),
+        type: isMovie ? 'movie' : 'tv'
       });
     }
     sources.sort((a, b) => (b.weight || 0) - (a.weight || 0));
@@ -901,11 +921,11 @@ export async function aggregateEpisode(query = {}) {
 
   logEpisodeDiagnostics(identity, sourceMeta, stats);
 
-  const entry = {
-    key: identity.key,
-    identity: {
-      ...identity,
-      display: formatVersionDisplay({
+  const isMovie = identity.is_movie === true || identity.type === 'movie';
+  // 展示：电影 = 片名 (年)；电视剧 = 片名 (地区 年) SxxExx
+  const display = isMovie
+    ? `${identity.title || '未知'}${identity.year ? ` (${identity.year})` : ''}`
+    : formatVersionDisplay({
         title: identity.title,
         region: identity.region,
         region_label: identity.region_label,
@@ -913,19 +933,27 @@ export async function aggregateEpisode(query = {}) {
         season: identity.season,
         episode: identity.episode,
         withEpisode: true
-      })
+      });
+
+  const entry = {
+    key: identity.key,
+    identity: {
+      ...identity,
+      display
     },
-    display: formatVersionDisplay({
-      title: identity.title,
-      region: identity.region,
-      region_label: identity.region_label,
-      year: identity.year,
-      season: identity.season,
-      episode: identity.episode,
-      withEpisode: true
-    }),
+    display,
+    // 来源统计：完整 metadata（文件名 / provider / 数量 / 聚合关系）
     sources: sourceMeta,
     sources_detail: sourceMeta,
+    sources_summary: sourceMeta.map((s) => ({
+      source: s.source,
+      provider: s.provider || s.source,
+      file_name: s.file_name,
+      count_raw: s.count_raw,
+      count_used: s.count_used,
+      matched_title: s.matched_title,
+      status: s.status
+    })),
     stats,
     comments
   };
@@ -965,39 +993,55 @@ export async function aggregateEpisode(query = {}) {
 }
 
 function summarizeSourceMeta(fr, identity) {
-  const file_name = fr.fileName || buildSourceFileLabel({
-    source: fr.source,
-    original_title: fr.original_title || identity.original_title,
-    title: fr.anime_title || identity.title,
-    region: fr.region || identity.region,
-    year: fr.year || identity.year,
-    season: fr.season ?? identity.season,
-    episode: fr.episode ?? identity.episode,
-    url: fr.url
-  });
+  const isMovie = identity?.is_movie === true || identity?.type === 'movie';
+  const season = isMovie ? null : (fr.season ?? identity.season ?? null);
+  const episode = isMovie ? null : (fr.episode ?? identity.episode ?? null);
+  // 优先使用上游已构造的原始文件名；否则按 movie/tv 规则生成
+  const file_name =
+    fr.fileName ||
+    fr.file_name ||
+    buildSourceFileLabel({
+      source: fr.source,
+      original_title: fr.original_title || identity.original_title,
+      title: fr.anime_title || identity.title,
+      region: fr.region || identity.region,
+      year: fr.year || identity.year,
+      season,
+      episode,
+      url: fr.url,
+      type: isMovie ? 'movie' : 'tv',
+      is_movie: isMovie
+    });
   return {
+    // —— web 面板「来源统计」必需字段 ——
     source: fr.source,
+    provider: fr.source,
+    file_name,
+    raw_file: file_name,
+    fileName: file_name,
     count_raw: fr.count_raw || 0,
     count_sampled: fr.count_sampled ?? null,
-    count_used: fr.count_used ?? fr.count_sampled ?? null,
+    count_used: fr.count_used ?? fr.count_sampled ?? fr.count_raw ?? 0,
+    // —— 匹配 / 聚合关系 ——
+    matched_title: fr.anime_title || null,
+    anime_title: fr.anime_title || null,
+    episode_title: fr.episode_title || null,
+    matched_episode: isMovie ? null : (fr.matched_episode ?? identity.episode ?? null),
+    match_reason: fr.match_reason || (isMovie ? 'movie_full' : null),
+    original_title: fr.original_title || identity.original_title || null,
+    region: fr.region || identity.region || null,
+    region_label: identity.region_label || null,
+    year: fr.year || identity.year || null,
+    season,
+    episode,
+    type: isMovie ? 'movie' : 'tv',
+    // —— 状态 ——
     quality_score: fr.quality_score ?? null,
     sample_method: fr.sample_method || null,
     status: fr.status || (fr.error ? 'failed' : 'ok'),
     weight: fr.weight,
     error: fr.error || fr.fail_reason || null,
     from_cache: Boolean(fr.from_cache),
-    matched_title: fr.anime_title || null,
-    episode_title: fr.episode_title || null,
-    matched_episode: fr.matched_episode ?? identity.episode ?? null,
-    match_reason: fr.match_reason || null,
-    original_title: fr.original_title || identity.original_title || null,
-    region: fr.region || identity.region || null,
-    region_label: identity.region_label || null,
-    year: fr.year || identity.year || null,
-    season: fr.season ?? identity.season,
-    episode: fr.episode ?? identity.episode,
-    file_name,
-    raw_file: file_name,
     url: fr.url || null
   };
 }
