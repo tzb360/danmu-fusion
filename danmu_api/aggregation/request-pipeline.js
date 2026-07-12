@@ -159,7 +159,9 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
       year: meta.year || null,
       version_key: meta.version_key || null,
       season: meta.season || 1,
-      episode: meta.episode || 1
+      episode: meta.episode || 1,
+      type: meta.type || null,
+      is_movie: meta.is_movie === true || meta.isMovie === true
     });
     await saveEpisodeCache({
       key: identity.key,
@@ -194,7 +196,9 @@ export async function tryLoadEpisodeCache(meta = {}) {
       year: meta.year || null,
       version_key: meta.version_key || null,
       season: meta.season || 1,
-      episode: meta.episode || 1
+      episode: meta.episode || 1,
+      type: meta.type || null,
+      is_movie: meta.is_movie === true || meta.isMovie === true
     });
     const cached = await loadEpisodeCache(identity.key);
     if (cached?.comments?.length) {

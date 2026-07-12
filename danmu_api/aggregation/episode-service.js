@@ -246,7 +246,90 @@ export function selectExactEpisodeLink(links = [], targetEpisode = 1) {
  * @param {boolean} [options.strict=true] 严格集号匹配（默认 true，禁止 nearest）
  * @param {object} [options.debugOut] 若传入对象，写入 episode 匹配调试信息
  */
+/**
+ * 电影专用：收集弹幕源链接
+ * - 不要求 episode 编号
+ * - 每平台取一条有效 url（电影整片）
+ * - season/episode 0/缺失均为合法
+ */
+export function collectMovieSourcesFromAnimes(animes = [], sourceWeights = {}, options = {}) {
+  const order = globals.sourceOrderArr || [];
+  const found = [];
+  const seen = new Set();
+  const matchDebug = [];
+
+  for (const anime of animes) {
+    if (!anime) continue;
+    const links = (anime.links || []).filter((l) => l && (l.url || l.id));
+    if (!links.length) {
+      matchDebug.push({
+        anime_title: anime.animeTitle || '',
+        source: anime.source || 'unknown',
+        chosen: null,
+        policy: 'movie_no_links'
+      });
+      continue;
+    }
+
+    // 电影：优先取带 url 的全部平台；同一 anime 多 link 时每平台一条
+    for (const link of links) {
+      if (!link?.url) continue;
+      const sourceName = anime.source || 'unknown';
+      const platform = inferPlatformFromUrl(link.url, link.title || sourceName) || sourceName;
+      const parts = parseCompositeUrl(link.url);
+      const candidates = parts.length > 1 ? parts : [{ source: platform, id: link.url, raw: link.url }];
+      for (const part of candidates) {
+        const src = part.source || platform;
+        const key = `${src}|${part.id || part.raw || link.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({
+          source: src,
+          url: part.id || part.raw || link.url,
+          full_url: part.raw?.includes?.(':') ? part.raw : (String(link.url).includes(':') ? link.url : `${src}:${link.url}`),
+          anime_title: anime.animeTitle || '',
+          episode_title: link.title || anime.animeTitle || '',
+          weight: resolveSourceWeight(src, order, sourceWeights),
+          episode_id: link.id,
+          matched_episode: null,
+          match_reason: 'movie_full'
+        });
+        matchDebug.push({
+          anime_title: anime.animeTitle || '',
+          source: src,
+          chosen: { reason: 'movie_full', title: link.title || '' },
+          policy: 'movie_no_episode'
+        });
+      }
+    }
+  }
+
+  found.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  if (options.debugOut && typeof options.debugOut === 'object') {
+    options.debugOut.input_episode = null;
+    options.debugOut.policy = 'movie_no_episode';
+    options.debugOut.anime_matches = matchDebug;
+    options.debugOut.selected_sources = found.map((s) => ({
+      source: s.source,
+      episode_title: s.episode_title,
+      matched_episode: null,
+      match_reason: s.match_reason
+    }));
+  }
+  log(
+    'info',
+    `[MovieMatch] animes=${animes.length} sources=${found.length} ` +
+      `[${found.map((s) => s.source).join(',')}]`
+  );
+  return found;
+}
+
 export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, sourceWeights = {}, options = {}) {
+  // 电影模式：不走集号匹配
+  if (options.movie === true || options.mediaType === 'movie') {
+    return collectMovieSourcesFromAnimes(animes, sourceWeights, options);
+  }
+
   const order = globals.sourceOrderArr || [];
   const found = [];
   const seen = new Set();

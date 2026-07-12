@@ -36,6 +36,22 @@ test('episode identity binds version for same tmdb', () => {
   assert.notEqual(us.key, uk.key);
 });
 
+test('movie identity has no season/episode in key', () => {
+  const m = buildEpisodeIdentity({
+    title: '007：大战皇家赌场',
+    tmdb_id: '36557',
+    year: '2006',
+    type: 'movie',
+    is_movie: true,
+    season: 0,
+    episode: 0
+  });
+  assert.equal(m.key, 'tmdb:36557:movie');
+  assert.equal(m.season, null);
+  assert.equal(m.episode, null);
+  assert.equal(m.is_movie, true);
+});
+
 test('episode identity falls back to normalized title', () => {
   const id = buildEpisodeIdentity({ title: '生 万 物', season: 2, episode: 1 });
   assert.ok(id.key.startsWith('title:'));

@@ -14,7 +14,8 @@ import { searchAnime, getBangumi, getComment } from '../apis/dandan-api.js';
 import { tryLoadEpisodeCache, autoSaveEpisodeCache } from '../aggregation/request-pipeline.js';
 import {
   aggregateEpisode,
-  collectEpisodeSourcesFromAnimes
+  collectEpisodeSourcesFromAnimes,
+  collectMovieSourcesFromAnimes
 } from '../aggregation/episode-service.js';
 import {
   buildEpisodeIdentity,
@@ -73,6 +74,26 @@ export function parseForwardQuery(urlOrObject = {}) {
     return s === '1' || s === 'true' || s === 'yes' || s === 'on';
   };
 
+  const typeRaw = get(['type', 'media_type', 'mediaType'], 'tv');
+  const type = String(typeRaw || 'tv').toLowerCase();
+  const isMovie =
+    type === 'movie' ||
+    type === 'movies' ||
+    type === 'film' ||
+    type === '电影' ||
+    type === '动画电影' ||
+    type === '剧场版';
+
+  // 电视剧默认 S1E1；电影 season/episode 保持原样（可为 0/null），禁止强制成 1
+  const seasonRaw = get(
+    ['season', 's', 'seasonNumber', 'SeasonNumber', 'ParentIndexNumber'],
+    isMovie ? null : 1
+  );
+  const episodeRaw = get(
+    ['episode', 'e', 'ep', 'episodeNumber', 'EpisodeNumber', 'IndexNumber'],
+    isMovie ? null : 1
+  );
+
   return {
     title: get(['title', 'name', 'seriesName', 'keyword'], '') || '',
     original_title: get(['original_title', 'originalTitle', 'original_name'], null),
@@ -83,14 +104,14 @@ export function parseForwardQuery(urlOrObject = {}) {
     year: yearMatch ? yearMatch[0] : (yearRaw != null ? String(yearRaw) : null),
     country: get(['country', 'origin_country', 'originCountry'], null),
     network: get(['network', 'networks', 'studio'], null),
-    // 1-based；兼容 Emby/Forward 多种字段名（不做全局 ±1）
-    season: get(['season', 's', 'seasonNumber', 'SeasonNumber', 'ParentIndexNumber'], 1),
-    episode: get(['episode', 'e', 'ep', 'episodeNumber', 'EpisodeNumber', 'IndexNumber'], 1),
+    season: seasonRaw,
+    episode: episodeRaw,
     episode_id: get(['episode_id', 'comment_id', 'commentId', 'episodeId'], null),
     anime_id: get(['anime_id', 'animeId'], null),
     // 用户/模块选择的版本键，如 us:2011:s4
     version_key: get(['version_key', 'versionKey', 'version'], null),
-    type: get(['type'], 'tv'),
+    type: isMovie ? 'movie' : type || 'tv',
+    is_movie: isMovie,
     force: asBool(get(['force', 'refresh'], 'false')),
     format: String(get(['format'], 'json')).toLowerCase(),
     // debug=1：响应附带 sources/stats + 完整 matched metadata
@@ -106,6 +127,13 @@ export function parseForwardQuery(urlOrObject = {}) {
       : asBool(get(['force_scroll', 'forceScroll', 'scroll_top'], '1')),
     region: get(['region', 'country_code'], null)
   };
+}
+
+function isMovieQuery(query) {
+  if (!query) return false;
+  if (query.is_movie === true || query.isMovie === true) return true;
+  const t = String(query.type || '').toLowerCase();
+  return t === 'movie' || t === 'movies' || t === 'film' || t === '电影';
 }
 
 function toSeasonNum(v) {
@@ -358,8 +386,9 @@ function findSeriesYearForRegion(animes, region) {
  * 字段缺失时显式为 null，便于确认 LogVar 实际识别到什么
  */
 export function buildMatchedMediaMetadata(query, matchedAnimes = [], filterSteps = [], allAnimes = []) {
-  const season = toSeasonNum(query.season);
-  const episode = toEpisodeNum(query.episode);
+  const movie = isMovieQuery(query);
+  const season = movie ? null : toSeasonNum(query.season);
+  const episode = movie ? null : toEpisodeNum(query.episode);
   const primary = matchedAnimes[0] || null;
   const aliases = Array.isArray(primary?.aliases) ? primary.aliases : [];
   const originalFromAlias = aliases.find(a => /^[A-Za-z0-9]/.test(String(a))) || aliases[0] || null;
@@ -387,24 +416,33 @@ export function buildMatchedMediaMetadata(query, matchedAnimes = [], filterSteps
     || extractYearValue(query.year)
     || (primary ? animeYear(primary) : null);
 
-  const display = formatVersionDisplay({
-    title: titleCn,
-    region,
-    region_label,
-    year: seriesYear,
-    season,
-    episode,
-    withEpisode: false
-  });
-  const displayFull = formatVersionDisplay({
-    title: titleCn,
-    region,
-    region_label,
-    year: seriesYear,
-    season,
-    episode,
-    withEpisode: true
-  });
+  // 电影：仅 片名 (年份)，禁止 S01E01
+  let display;
+  let displayFull;
+  if (movie) {
+    const y = seriesYear ? ` (${seriesYear})` : '';
+    display = `${titleCn || '未知'}${y}`;
+    displayFull = display;
+  } else {
+    display = formatVersionDisplay({
+      title: titleCn,
+      region,
+      region_label,
+      year: seriesYear,
+      season,
+      episode,
+      withEpisode: false
+    });
+    displayFull = formatVersionDisplay({
+      title: titleCn,
+      region,
+      region_label,
+      year: seriesYear,
+      season,
+      episode,
+      withEpisode: true
+    });
+  }
 
   const meta = {
     title: titleCn,
@@ -420,6 +458,7 @@ export function buildMatchedMediaMetadata(query, matchedAnimes = [], filterSteps
     tvdb_id: query.tvdb_id || primary?.tvdb_id || primary?.tvdbId || null,
     country: query.country || (region === 'us' ? '美国' : region === 'uk' ? '英国' : null),
     network: query.network || primary?.network || null,
+    type: movie ? 'movie' : (query.type || 'tv'),
     season,
     episode,
     display_title: display,
@@ -445,11 +484,14 @@ export function buildMatchedMediaMetadata(query, matchedAnimes = [], filterSteps
 }
 
 /**
- * 搜索并收集该集全部可用来源
+ * 搜索并收集可用来源
+ * 电影 / 电视剧 完全分离，禁止共用 episode 严格匹配
  */
 async function resolveMultiSources(query) {
-  const season = toSeasonNum(query.season);
-  const episode = toEpisodeNum(query.episode);
+  const movie = isMovieQuery(query);
+  // 电影：不使用 season/episode；电视剧：1-based
+  const season = movie ? null : toSeasonNum(query.season);
+  const episode = movie ? null : toEpisodeNum(query.episode);
   let keyword = query.title || '';
   if (!keyword && query.tmdb_id) keyword = String(query.tmdb_id);
   if (!keyword && query.movie_id) keyword = String(query.movie_id);
@@ -469,16 +511,42 @@ async function resolveMultiSources(query) {
 
   const searchUrl = new URL('http://local/api/v2/search/anime');
   searchUrl.searchParams.set('keyword', keyword);
-  searchUrl.searchParams.set('season', String(season));
-  searchUrl.searchParams.set('episode', String(episode));
+  // 电影：不传假 S1E1，避免下游当剧集过滤
+  if (movie) {
+    searchUrl.searchParams.set('type', 'movie');
+  } else {
+    searchUrl.searchParams.set('season', String(season));
+    searchUrl.searchParams.set('episode', String(episode));
+  }
 
-  log('info', `[ForwardAdapter] search keyword="${keyword}" S${season}E${episode} year=${query.year || '-'} tmdb=${query.tmdb_id || '-'} imdb=${query.imdb_id || '-'}`);
+  if (movie) {
+    log(
+      'info',
+      `[ForwardAdapter] Movie Request: tmdb_id=${query.tmdb_id || '-'} title="${keyword}" ` +
+        `original_title=${query.original_title || '-'} year=${query.year || '-'} ` +
+        `(no season/episode)`
+    );
+  } else {
+    log(
+      'info',
+      `[ForwardAdapter] TV Request: tmdb_id=${query.tmdb_id || '-'} title="${keyword}" ` +
+        `season=${season} episode=${episode} year=${query.year || '-'}`
+    );
+  }
+  log(
+    'info',
+    `[ForwardAdapter] search keyword="${keyword}" type=${movie ? 'movie' : 'tv'} ` +
+      `${movie ? '' : `S${season}E${episode} `}year=${query.year || '-'} tmdb=${query.tmdb_id || '-'} imdb=${query.imdb_id || '-'}`
+  );
   const t0 = Date.now();
   const searchRes = await searchAnime(searchUrl);
   const searchBody = JSON.parse(await searchRes.text());
   const searchMs = Date.now() - t0;
   const animes = searchBody.animes || [];
-  log('info', `[ForwardAdapter] search done animes=${animes.length} ${searchMs}ms`);
+  log(
+    'info',
+    `[ForwardAdapter] search done type=${movie ? 'movie' : 'tv'} animes=${animes.length} ${searchMs}ms`
+  );
 
   // 补全带 links 的详情：优先 globals.animes，必要时 getBangumi
   const detailed = [];
@@ -560,9 +628,9 @@ async function resolveMultiSources(query) {
   // 内容消歧：排除同名综艺/赏析/幕后纪实/非主标题引用
   const contentQuery = {
     title: query.title || keyword,
-    type: query.type || 'unknown',
+    type: movie ? 'movie' : query.type || 'tv',
     year: query.year || null,
-    season: season
+    season: movie ? null : season
   };
   const {
     kept: contentKept,
@@ -580,7 +648,117 @@ async function resolveMultiSources(query) {
     `[ForwardAdapter] content filter ${detailed.length} -> ${contentKept.length} (rejected ${contentRejected.length})`
   );
 
-  // —— 架构：先构建多版本候选，再由 version_key/region 选择（不在模块侧固定版本）——
+  // ========== 电影路径：唯一匹配 + 全片链接，禁止 episode 过滤 ==========
+  if (movie) {
+    const episodeMatchDebug = {};
+    const rawSources = collectMovieSourcesFromAnimes(contentKept, {}, {
+      debugOut: episodeMatchDebug
+    });
+    log(
+      'info',
+      `[ForwardAdapter] Movie Provider: search keyword="${keyword}" response animes=${animes.length} ` +
+        `kept=${contentKept.length} sources=${rawSources.length} ` +
+        `[${rawSources.map((s) => s.source).join(',')}]`
+    );
+
+    const media = buildMatchedMediaMetadata(
+      { ...query, type: 'movie', is_movie: true, season: null, episode: null },
+      contentKept,
+      [
+        ...(contentSteps || []),
+        { step: 'movie_collect_sources', count: rawSources.length }
+      ],
+      contentKept
+    );
+    media.season = null;
+    media.episode = null;
+    media.version_key = null;
+    media.candidates_count = 1;
+
+    const byPlat = new Map();
+    for (const s of rawSources) {
+      const k = String(s.source || 'unknown').toLowerCase();
+      if (!byPlat.has(k)) {
+        byPlat.set(k, {
+          ...s,
+          region: media.region,
+          year: media.year,
+          original_title: media.original_title,
+          anime_title: s.anime_title || media.matched_anime_title || media.title,
+          fileName: buildSourceFileLabel({
+            source: s.source,
+            original_title: media.original_title,
+            title: media.title,
+            region: media.region,
+            year: media.year,
+            season: null,
+            episode: null,
+            url: s.url
+          })
+        });
+      }
+    }
+    // 电影：不过滤 matched_episode，全部平台源可用
+    const movieSources = [...byPlat.values()].slice(0, 8);
+
+    media.episode_match = {
+      input_season: null,
+      input_episode: null,
+      policy: 'movie_no_episode',
+      selected_sources: movieSources.map((s) => ({
+        source: s.source,
+        episode_title: s.episode_title,
+        matched_episode: null,
+        match_reason: s.match_reason
+      })),
+      debug: episodeMatchDebug
+    };
+
+    // 电影：单候选（固定匹配），供模块展示
+    const slimList = [
+      {
+        version_key: 'movie',
+        display: media.display,
+        title: media.title,
+        region: media.region,
+        region_label: media.region_label,
+        year: media.year,
+        season: null,
+        episode: null,
+        score: movieSources.length ? 100 : 40,
+        source_count: movieSources.length,
+        sources_preview: movieSources.map((s) => s.source),
+        is_default: true
+      }
+    ];
+
+    log(
+      'info',
+      `[ForwardAdapter] Movie resolved display="${media.display}" sources=${movieSources.length}`
+    );
+
+    return {
+      sources: movieSources,
+      animes: contentKept,
+      allCandidates: detailed,
+      versionCandidates: [],
+      candidates: slimList,
+      selected_version: 'movie',
+      keyword,
+      season: null,
+      episode: null,
+      searchMs,
+      animeCount: animes.length,
+      media,
+      filterSteps: [
+        ...(contentSteps || []),
+        { step: 'movie_path', sources: movieSources.length }
+      ],
+      episodeMatchDebug
+    };
+  }
+
+  // ========== 电视剧路径：版本候选 + 严格 episode ==========
   const versionBundle = buildVersionCandidates(contentKept, {
     title: query.title || keyword,
     season,
@@ -607,7 +785,6 @@ async function resolveMultiSources(query) {
     }
   ];
 
-  // 用选中版本覆盖 region/year 再生成 media 展示
   const mediaQuery = {
     ...query,
     region: selected?.region || query.region,
@@ -631,7 +808,6 @@ async function resolveMultiSources(query) {
       `animes=${filtered.length}`
   );
 
-  // 严格 episode 源：优先用候选里已收集的；否则再收集
   let rawSources = selected?._sources || [];
   const episodeMatchDebug = selected?._episode_match || {};
   if (!rawSources.length && filtered.length) {
@@ -709,16 +885,18 @@ async function resolveMultiSources(query) {
 export async function getForwardDanmaku(queryInput = {}) {
   const started = Date.now();
   const query = parseForwardQuery(queryInput);
-  const season = toSeasonNum(query.season);
-  const episode = toEpisodeNum(query.episode);
+  const movie = isMovieQuery(query);
+  // 电影：不强制 S1E1；电视剧：1-based
+  const season = movie ? null : toSeasonNum(query.season);
+  const episode = movie ? null : toEpisodeNum(query.episode);
   const titleHint = query.title || query.tmdb_id || query.movie_id || query.imdb_id || '';
 
-  // 完整接收日志：定位 SE 是否在传输中被改写
   log(
     'info',
-    `[ForwardAdapter] recv title="${query.title || ''}" season=${season} episode=${episode} ` +
-      `raw_season=${query.season} raw_episode=${query.episode} ` +
-      `tmdb=${query.tmdb_id || '-'} type=${query.type || '-'} year=${query.year || '-'}`
+    `[ForwardAdapter] recv type=${movie ? 'movie' : 'tv'} title="${query.title || ''}" ` +
+      `tmdb=${query.tmdb_id || '-'} year=${query.year || '-'} ` +
+      `season=${movie ? 'n/a' : season} episode=${movie ? 'n/a' : episode} ` +
+      `raw_season=${query.season} raw_episode=${query.episode}`
   );
 
   if (!titleHint && !query.episode_id && !query.anime_id) {
@@ -727,7 +905,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     throw err;
   }
 
-  // cacheIdentity 在 resolve 后用完整 region/year 构建；此处仅作 force 前的预检占位
+  // cacheIdentity 在 resolve 后用完整 identity 构建
   let cacheIdentity = {
     title: String(query.title || titleHint),
     original_title: query.original_title || null,
@@ -736,17 +914,24 @@ export async function getForwardDanmaku(queryInput = {}) {
     region: query.region || null,
     year: query.year || null,
     season,
-    episode
+    episode,
+    type: movie ? 'movie' : 'tv',
+    is_movie: movie
   };
 
-  // Forward 专属 API：不走 commentId 单源旁路；统一版本匹配 + 聚合
-  // （若带 episode_id，仅作为辅助提示写入 query，仍走 resolveMultiSources）
   if (query.episode_id) {
     log('info', `[ForwardAdapter] episode_id=${query.episode_id} noted; still force aggregate path`);
   }
 
-  // —— 搜索 + 版本候选 +（可选）聚合 ——
-  const resolved = await resolveMultiSources({ ...query, season, episode, title: titleHint });
+  // —— 搜索 +（电影：全片源 / 电视剧：版本候选）——
+  const resolved = await resolveMultiSources({
+    ...query,
+    season,
+    episode,
+    title: titleHint,
+    type: movie ? 'movie' : query.type || 'tv',
+    is_movie: movie
+  });
   const { sources, searchMs, animeCount, media, candidates, selected_version } = resolved;
 
   // 仅识别：返回候选版本列表（模块负责展示/切换，不在此固定唯一结果）
@@ -789,7 +974,8 @@ export async function getForwardDanmaku(queryInput = {}) {
     });
   }
 
-  // Forward 专属：强制走聚合缓存（缓存键绑定 tmdb + s/e + version）
+  // Forward 专属：强制走聚合缓存
+  // 电影：tmdb:id:movie；电视剧：tmdb + s/e + version
   cacheIdentity = {
     title: media?.title || query.title || titleHint,
     original_title: media?.original_title || query.original_title || null,
@@ -798,9 +984,13 @@ export async function getForwardDanmaku(queryInput = {}) {
     region: media?.region || query.region || null,
     region_label: media?.region_label || null,
     year: media?.year || query.year || null,
-    version_key: selected_version || media?.version_key || query.version_key || null,
-    season,
-    episode
+    version_key: movie
+      ? null
+      : selected_version || media?.version_key || query.version_key || null,
+    season: movie ? null : season,
+    episode: movie ? null : episode,
+    type: movie ? 'movie' : 'tv',
+    is_movie: movie
   };
 
   // 带完整 identity 的缓存命中（新 key 含 region/year）
@@ -861,7 +1051,11 @@ export async function getForwardDanmaku(queryInput = {}) {
     );
   }
 
-  log('info', `[ForwardAdapter] FORCE aggregate n=${sources.length} media=${media?.display || '-'} key=${buildEpisodeIdentity(cacheIdentity).key}`);
+  log(
+    'info',
+    `[ForwardAdapter] FORCE aggregate type=${movie ? 'movie' : 'tv'} n=${sources.length} ` +
+      `media=${media?.display || '-'} key=${buildEpisodeIdentity(cacheIdentity).key}`
+  );
   const agg = await aggregateEpisode({
     title: cacheIdentity.title,
     original_title: cacheIdentity.original_title,
@@ -871,8 +1065,10 @@ export async function getForwardDanmaku(queryInput = {}) {
     region_label: cacheIdentity.region_label,
     year: cacheIdentity.year,
     version_key: cacheIdentity.version_key || null,
-    season,
-    episode,
+    season: movie ? 1 : season, // aggregate 内部仍需占位；缓存键已用 type=movie 区分
+    episode: movie ? 1 : episode,
+    type: movie ? 'movie' : 'tv',
+    is_movie: movie,
     force: query.force === true,
     timeline: true,
     strict_sources: true,

@@ -181,14 +181,36 @@ export function buildEpisodeIdentity(identity = {}) {
     year
   );
 
+  // 电影：缓存键不绑 season/episode（0/0 与 S1E1 均非法用于电影）
+  const typeHint = String(
+    identity.type || identity.media_type || identity.mediaType || ''
+  ).toLowerCase();
+  const isMovie =
+    identity.is_movie === true ||
+    identity.isMovie === true ||
+    typeHint === 'movie' ||
+    typeHint === 'movies' ||
+    typeHint === 'film';
+
   let key;
-  if (tmdbId) {
-    // tmdb + s/e + version（同 tmdb 下也可能有多版本候选时靠 version 拆开）
+  if (isMovie) {
+    if (tmdbId) {
+      key = `tmdb:${tmdbId}:movie`;
+    } else if (imdbId) {
+      key = `imdb:${imdbId}:movie`;
+    } else if (titleKey) {
+      key = `title:${titleKey}:movie:y${year || '0000'}`;
+    } else if (episodeId) {
+      key = `epid:${episodeId}`;
+    } else {
+      throw new TypeError('movie identity requires title, tmdb_id, or imdb_id');
+    }
+  } else if (tmdbId) {
+    // 电视剧：tmdb + s/e + version
     key = `tmdb:${tmdbId}:s${season}:e${episode}${verSuffix}`;
   } else if (imdbId) {
     key = `imdb:${imdbId}:s${season}:e${episode}${verSuffix}`;
   } else if (titleKey) {
-    // 必须含 region + year / version_key，防止美/英同名同季同集串缓存
     const regPart = region || 'unk';
     const yearPart = year || '0000';
     if (version_key) {
@@ -210,12 +232,14 @@ export function buildEpisodeIdentity(identity = {}) {
     region: region || null,
     region_label: region_label || null,
     year: year || null,
-    version_key: version_key || null,
+    version_key: isMovie ? null : version_key || null,
     tmdb_id: tmdbId,
     imdb_id: imdbId,
-    season,
-    episode,
-    episode_id: episodeId
+    season: isMovie ? null : season,
+    episode: isMovie ? null : episode,
+    episode_id: episodeId,
+    type: isMovie ? 'movie' : (typeHint || 'tv'),
+    is_movie: isMovie
   };
 }
 
