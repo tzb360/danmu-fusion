@@ -2,30 +2,27 @@
  * Danmu Fusion · 弹幕融合
  * Forward 专用弹幕聚合播放模块
  *
- * 版本：1.2.0
+ * 版本：1.2.1
  *
  * 架构（电影 / 电视剧完全分离）：
  *
- *  电影 movie：
- *    title → 匹配唯一影片 → 固定结果
+ *  类型唯一依据：unionId = {tmdb_id}_{type}_{season}_{episode}
+ *    36557_movie_0_0  → movie（忽略 0/0，禁止 S01E01）
+ *    34307_tv_5_3     → tv（使用 season/episode）
  *
- *  电视剧 episode/tv：
- *    播放器 series + season + episode + tmdb
- *      → 识别当前集（禁止默认 E01）
- *      → 服务端版本候选
- *      → getDetail 返回本季全集列表，默认选中当前集
- *      → 每集切换重新读播放器 SE，重新请求 API
+ *  电影：title + year，固定唯一匹配，不下发 season/episode
+ *  电视剧：title + year + 本季全集列表，默认选中播放器 episode
  *
- *  缓存：只缓存弹幕数据（tmdb+s+e+version），不缓存「当前选择」
+ *  缓存：只缓存弹幕数据，无模块级媒体类型状态
  */
 
 WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.2.0",
+  version: "1.2.1",
   requiredVersion: "0.0.2",
   description:
-    "Danmu Fusion：电影固定匹配；电视剧严格按播放器 season/episode 动态请求。搜索展示版本候选，详情列出本季全集并默认选中当前集，禁止跨集固定。",
+    "Danmu Fusion：按 unionId 分流 movie/tv。电影仅标题+年份；电视剧按季集动态请求，详情展开本季全集。",
   author: "tzb360",
   site: "https://github.com/tzb360/danmu-fusion",
   website: "https://github.com/tzb360/danmu-fusion",
@@ -130,8 +127,8 @@ WidgetMetadata = {
 };
 
 // ---------------------------------------------------------------------------
-const FUSION_UA = "DanmuFusion/1.2.0 (tzb360; Forward)";
-// v5：电视剧季列表 + 播放器 SE 优先；缓存只绑弹幕 tmdb+s+e+version
+const FUSION_UA = "DanmuFusion/1.2.1 (tzb360; Forward)";
+// v5：unionId 分流 movie/tv；缓存只绑弹幕，无类型状态
 const CACHE_PREFIX = "tzb360.danmu.fusion.v5:";
 /** 本季分集列表上限（未知总集数时兜底，保证当前集可被选中） */
 const TV_SEASON_LIST_MAX = 40;
@@ -279,12 +276,107 @@ function resolveConfig(params) {
 }
 
 /**
- * 媒体类型：movie | tv | episode
- * 电视剧/分集绝不能走电影「固定匹配」逻辑
+ * 解析播放器 unionId（权威身份）
+ *
+ * 唯一标准格式：
+ *   {tmdb_id}_{type}_{season}_{episode}
+ *
+ * 示例：
+ *   36557_movie_0_0   → movie（season/episode 占位 0，忽略）
+ *   34307_tv_5_3      → tv/episode
+ *   tmdb_36557_movie_0_0（兼容前缀）
+ *
+ * 不要靠标题/TMDB 搜索结果猜类型。
+ */
+function parseUnionOrMediaId(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+
+  // 主格式：36557_movie_0_0 / 34307_tv_5_3
+  let m = s.match(/^(?:tmdb_)?(\d+)_(movie|tv|episode|show|series)_(\d+)_(\d+)$/i);
+  if (m) {
+    const typeRaw = m[2].toLowerCase();
+    const isMovie = typeRaw === "movie";
+    const season = Number(m[3]);
+    const episode = Number(m[4]);
+    return {
+      tmdb_id: m[1],
+      type: isMovie ? "movie" : "tv",
+      media_type: isMovie ? "movie" : "tv",
+      season: isMovie ? null : season > 0 ? season : null,
+      episode: isMovie ? null : episode > 0 ? episode : null,
+      isMovie: isMovie,
+      kind: isMovie ? "movie" : "episode",
+      source: "unionId",
+      raw: s
+    };
+  }
+
+  // 兼容：tmdb_36557_movie / 36557_movie（无季集占位）
+  m = s.match(/^(?:tmdb_)?(\d+)_movie$/i);
+  if (m) {
+    return {
+      tmdb_id: m[1],
+      type: "movie",
+      media_type: "movie",
+      season: null,
+      episode: null,
+      isMovie: true,
+      kind: "movie",
+      source: "unionId",
+      raw: s
+    };
+  }
+
+  // 兼容：34307_tv_s5_e3 / tmdb_34307_tv_5_3 已由主格式覆盖
+  m = s.match(/^(?:tmdb_)?(\d+)_tv_s(\d+)[_eE](\d+)$/i);
+  if (m) {
+    return {
+      tmdb_id: m[1],
+      type: "tv",
+      media_type: "tv",
+      season: Number(m[2]),
+      episode: Number(m[3]),
+      isMovie: false,
+      kind: "episode",
+      source: "unionId",
+      raw: s
+    };
+  }
+
+  return null;
+}
+
+/**
+ * 媒体类型分流：movie | tv | episode
+ *
+ * 优先级（从高到低）：
+ *   1) unionId 内的 type 字段（唯一权威，禁止用标题/TMDB 猜）
+ *   2) 播放器显式 type/mediaType（movie / episode / tv）
+ *   3) 仅当完全没有 type 线索时，才用「有效」季集（>0）推断
+ *
+ * 注意：电影常见 season=0 episode=0，绝不能当成剧集！
  */
 function classifyMediaKind(p) {
+  const p0 = p || {};
+
+  // 1) unionId 权威
+  const unionRaw = firstPresent(p0, [
+    "unionId",
+    "union_id",
+    "mediaId",
+    "MediaId",
+    "itemId",
+    "ItemId"
+  ]);
+  const fromUnion = parseUnionOrMediaId(unionRaw);
+  if (fromUnion) {
+    return fromUnion.isMovie ? "movie" : "episode";
+  }
+
+  // 2) 显式 type
   const t = String(
-    (p && (p.type || p.Type || p.mediaType || p.MediaType || p.itemType)) || ""
+    p0.type || p0.Type || p0.mediaType || p0.MediaType || p0.media_type || p0.itemType || ""
   ).toLowerCase();
   if (
     t === "movie" ||
@@ -311,72 +403,41 @@ function classifyMediaKind(p) {
   ) {
     return "tv";
   }
-  // unionId / mediaId 形如 34307_tv_5_3 → 电视剧
-  const uid = String(
-    firstPresent(p, ["unionId", "union_id", "mediaId", "MediaId", "itemId"]) || ""
+
+  // 3) 无 type 时：仅「有效」季或集（>=1）才视为剧集
+  //    season=0 / episode=0 是电影占位，忽略
+  const sNum = toInt(
+    firstPresent(p0, [
+      "season",
+      "seasonNumber",
+      "SeasonNumber",
+      "ParentIndexNumber",
+      "parentIndexNumber"
+    ]),
+    null
   );
-  if (/_tv_/i.test(uid) || /^tmdb_\d+_tv_/i.test(uid)) return "episode";
-  // 有季/集字段 → 电视剧/分集
-  const hasSeason = firstPresent(p, [
-    "season",
-    "seasonNumber",
-    "SeasonNumber",
-    "ParentIndexNumber",
-    "parentIndexNumber"
-  ]);
-  const hasEpisode = firstPresent(p, [
-    "episode",
-    "episodeNumber",
-    "EpisodeNumber",
-    "IndexNumber",
-    "indexNumber"
-  ]);
-  if (hasSeason != null || hasEpisode != null) return "episode";
-  // type 缺失且无季集 → 电影
-  if (!t || t === "unknown") return "movie";
-  return "tv";
+  const eNum = toInt(
+    firstPresent(p0, [
+      "episode",
+      "episodeNumber",
+      "EpisodeNumber",
+      "IndexNumber",
+      "indexNumber"
+    ]),
+    null
+  );
+  if ((sNum != null && sNum >= 1) || (eNum != null && eNum >= 1)) {
+    return "episode";
+  }
+
+  // 默认电影（避免把 0/0 当剧集）
+  return "movie";
 }
 
 /** 是否电影 */
 function isMovieType(type, season, episode, params) {
   if (params) return classifyMediaKind(params) === "movie";
   return classifyMediaKind({ type: type, season: season, episode: episode }) === "movie";
-}
-
-/**
- * 解析播放器 unionId / 媒体 id
- * 支持：
- *   34307_tv_5_3
- *   tmdb_34307_tv_5_3
- *   tmdb_34307_tv_s5_e3
- *   tmdb_34307_movie
- */
-function parseUnionOrMediaId(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return null;
-  let m = s.match(/^(?:tmdb_)?(\d+)_tv_s?(\d+)[_eE](\d+)$/i);
-  if (m) {
-    return {
-      tmdb_id: m[1],
-      season: Number(m[2]),
-      episode: Number(m[3]),
-      isMovie: false,
-      kind: "episode",
-      source: "unionId"
-    };
-  }
-  m = s.match(/^(?:tmdb_)?(\d+)_movie$/i);
-  if (m) {
-    return {
-      tmdb_id: m[1],
-      season: null,
-      episode: null,
-      isMovie: true,
-      kind: "movie",
-      source: "unionId"
-    };
-  }
-  return null;
 }
 
 /**
@@ -784,28 +845,34 @@ function resolveIdentity(params) {
     yearFrom(p.PremiereDate) ||
     null;
 
-  // —— 电影路径：不读季集 ——
+  // —— 电影路径：完全忽略 season/episode（含播放器 0/0 占位）——
   if (movie) {
     const animeIdRaw = p.animeId != null ? p.animeId : p.bangumiId;
     const fromAnime = parseAnimeId(animeIdRaw);
     const fromUnion = parseUnionOrMediaId(
-      firstPresent(p, ["unionId", "union_id", "mediaId"]) 
+      firstPresent(p, ["unionId", "union_id", "mediaId", "MediaId", "itemId"])
     );
     if (!tmdbId && fromAnime && fromAnime.tmdb_id) tmdbId = fromAnime.tmdb_id;
     if (!tmdbId && fromUnion && fromUnion.tmdb_id) tmdbId = fromUnion.tmdb_id;
+    // 电影绝不能走剧集 SE 逻辑
     return {
       title: title,
       tmdb_id: tmdbId,
       imdb_id: imdbId,
       tvdb_id: tvdbId,
       year: year,
-      season: 1,
-      episode: 1,
-      seasonSource: "movie_fixed",
-      episodeSource: "movie_fixed",
-      hasPlayerSeason: true,
-      hasPlayerEpisode: true,
-      rawSeasonEpisode: {},
+      season: null,
+      episode: null,
+      seasonSource: "movie_none",
+      episodeSource: "movie_none",
+      hasPlayerSeason: false,
+      hasPlayerEpisode: false,
+      rawSeasonEpisode: {
+        note: "movie ignores season/episode placeholders",
+        season_raw: p.season,
+        episode_raw: p.episode,
+        unionId: fromUnion && fromUnion.raw
+      },
       type: "movie",
       mediaKind: "movie",
       isMovie: true,
@@ -959,11 +1026,15 @@ function buildQuery(identity, cfg, extra) {
   if (identity.year) q.year = identity.year;
   if (identity.original_title) q.original_title = identity.original_title;
   if (identity.region) q.region = identity.region;
-  // 电影 / 电视剧类型明确下发
+  // 电影 / 电视剧：type 必须正确；禁止共用匹配参数
   q.type = identity.isMovie ? "movie" : "tv";
-  // 强制 1-based；电视剧必须始终带 season+episode，禁止只发 title
-  q.season = String(Math.max(1, Number(identity.season) || 1));
-  q.episode = String(Math.max(1, Number(identity.episode) || 1));
+  if (identity.isMovie) {
+    // 电影：禁止下发 season/episode（服务端按电影唯一匹配）
+  } else {
+    // 电视剧：必须带当前季集
+    q.season = String(Math.max(1, Number(identity.season) || 1));
+    q.episode = String(Math.max(1, Number(identity.episode) || 1));
+  }
   // 用户选择的版本（切换美版/英版时传入）
   if (identity.version_key) q.version_key = String(identity.version_key);
   q.color_to_white = cfg.colorToWhite ? "1" : "0";
@@ -974,39 +1045,42 @@ function buildQuery(identity, cfg, extra) {
   return q;
 }
 
-/** 本地生成展示标题：SE 永远来自 identity，不被服务端陈旧 display 覆盖 */
-function buildLocalDisplay(identity, media) {
-  const title =
+/**
+ * 本地展示标题
+ * 电影：中文名 + 年份   →  007：大战皇家赌场 (2006)   禁止 S01E01
+ * 电视剧：剧名 + 年份   →  无耻之徒 (2015)           SE 在详情列表，不拼进系列名
+ * opts.withSE=true 时电视剧才附加当前 SxxExx（调试/当前集标签用）
+ */
+function buildLocalDisplay(identity, media, opts) {
+  const o = opts || {};
+  let title =
     (media && (media.title || media.display_title)) ||
     identity.title ||
     "未知";
-  const regionLabel =
-    (media && (media.region_label || media.region)) || identity.region || null;
-  // 展示年：优先系列年/查询年，其次 matched season_year（仅作参考）
+  // 剥掉任何误带的 SxxExx / 版本噪声
+  title = String(title)
+    .replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "")
+    .replace(/\s*S\d{1,2}\s*$/i, "")
+    .trim();
+
   const year =
     (media && media.year) ||
     identity.year ||
     (media && media.season_year) ||
     null;
-  const segs = [];
-  if (regionLabel) segs.push(String(regionLabel));
-  if (year) segs.push(String(year));
-  const version = segs.length ? " (" + segs.join(" ") + ")" : "";
+
   if (identity.isMovie) {
-    return String(title).replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "").trim() + version;
+    // 电影：禁止 season/episode/S01E01
+    if (year) return title + " (" + year + ")";
+    return title;
   }
-  const s = String(Math.max(1, Number(identity.season) || 1)).padStart(2, "0");
-  const e = String(Math.max(1, Number(identity.episode) || 1)).padStart(2, "0");
-  // 去掉服务端 display 里可能已带的 SxxExx，再拼本地 SE
-  const base = String(title)
-    .replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "")
-    .replace(/\s*S\d{1,2}\s*$/i, "")
-    .trim();
-  // 若 title 已含 version 括号则不再重复
-  if (/\(\s*[^)]+\s*\)\s*$/.test(base)) {
-    return base + " S" + s + "E" + e;
+
+  // 电视剧：剧名 + 年份；可选附加当前集
+  let out = year ? title + " (" + year + ")" : title;
+  if (o.withSE) {
+    out = out + " " + formatSE(identity.season, identity.episode);
   }
-  return base + version + " S" + s + "E" + e;
+  return out;
 }
 
 function logOutboundApi(cfg, identity, queryObj, tag, requestUrl) {
@@ -1295,11 +1369,17 @@ async function searchDanmu(params) {
     return { animes: [] };
   }
 
-  // ========== 电影：固定唯一匹配 ==========
+  // ========== 电影：固定唯一匹配（禁止 S01E01）==========
   if (identity.isMovie) {
     let media = null;
     try {
       const queryObj = buildQuery(identity, cfg, { debug: true, resolve_only: true });
+      // 自检：电影 query 不得带 season/episode
+      if (queryObj.season != null || queryObj.episode != null) {
+        safeLog(true, "MOVIE_QUERY_HAS_SE_ERROR", queryObj);
+        delete queryObj.season;
+        delete queryObj.episode;
+      }
       const url = forwardDanmakuUrl(cfg, queryObj);
       logOutboundApi(cfg, identity, queryObj, "发送 Forward API(movie resolve)", url);
       const raw = await httpGetRetry(
@@ -1312,18 +1392,32 @@ async function searchDanmu(params) {
       safeLog(true, "resolve.movie.fail", String(e && e.message ? e.message : e));
     }
     const animeId = stableAnimeId(identity);
-    const title = buildLocalDisplay(identity, media);
-    safeLog(true, "searchDanmu.movie.final", { animeId: animeId, title: title });
+    // 中文名 + 年份，禁止任何 SxxExx
+    let title = buildLocalDisplay(identity, media);
+    if (/S\d{1,2}E\d{1,2}/i.test(title)) {
+      safeLog(true, "MOVIE_DISPLAY_HAS_SE_ERROR", { title: title });
+      title = title.replace(/\s*S\d{1,2}E\d{1,2}\s*/gi, " ").trim();
+    }
+    safeLog(true, "searchDanmu.movie.final", {
+      MediaType: "movie",
+      Title: title,
+      TMDB: identity.tmdb_id,
+      animeId: animeId,
+      hasSE: /S\d{1,2}E\d{1,2}/i.test(title)
+    });
     return {
       animes: [
         {
           animeId: animeId,
           bangumiId: String(animeId),
-          animeTitle: "★ " + title,
+          animeTitle: title,
           type: "movie",
-          typeDescription: "电影 · 固定匹配",
+          typeDescription: "电影",
           imageUrl: "",
-          startDate: identity.year ? identity.year + "-01-01" : "",
+          startDate:
+            (media && media.year) || identity.year
+              ? String((media && media.year) || identity.year) + "-01-01"
+              : "",
           episodeCount: 1,
           rating: 0,
           isFavorited: true
@@ -1333,7 +1427,7 @@ async function searchDanmu(params) {
   }
 
   // ========== 电视剧：版本候选 + 本季全集（详情里展开） ==========
-  // 关键：展示用 SE 必须来自播放器 identity，禁止用服务端陈旧 E01
+  // 展示：剧名 (年份)；当前集在详情列表默认选中
   const playerSE = formatSE(identity.season, identity.episode);
   let candidates = [];
   let selectedVersion = null;
@@ -1400,19 +1494,18 @@ async function searchDanmu(params) {
         year: c.year || identity.year
       });
       const animeId = stableAnimeId(idPart, c.version_key);
-      // 展示：系列版本名 + 播放器当前 SE（绝不用候选里错误的 E01）
-      const versionLabel = (function () {
-        const segs = [];
-        if (c.region_label || c.region) segs.push(String(c.region_label || c.region));
-        if (c.year) segs.push(String(c.year));
-        const base = String(c.title || identity.title || "未知")
-          .replace(/\s*S\d{1,2}E\d{1,2}\s*$/i, "")
-          .trim();
-        const ver = segs.length ? " (" + segs.join(" ") + ")" : "";
-        return base + ver;
-      })();
+      // 剧名 + 年份（不拼 SxxExx；当前集在详情列表）
+      const seriesTitle = buildLocalDisplay(
+        Object.assign({}, idPart, { isMovie: false }),
+        {
+          title: c.title || identity.title,
+          year: c.year || identity.year,
+          region_label: c.region_label
+        }
+      );
       const mark = c.is_default || i === 0 ? "★ " : "▷ ";
-      const display = versionLabel + " " + playerSE;
+      // 多版本时版本标签放描述，标题保持「剧名 (年)」
+      const display = seriesTitle;
       safeLog(true, "searchDanmu.tv.candidate", {
         mark: mark.trim(),
         display: display,
@@ -1428,12 +1521,12 @@ async function searchDanmu(params) {
         typeDescription:
           "当前 " +
           playerSE +
-          " · 详情展开本季全集 · 点选切换版本（" +
-          (c.sources_preview || []).join("/") +
-          "）",
+          " · 本季全集 · 版本 " +
+          (c.region_label || c.region || "") +
+          " " +
+          (c.sources_preview || []).join("/"),
         imageUrl: "",
         startDate: c.year ? c.year + "-01-01" : identity.year ? identity.year + "-01-01" : "",
-        // 关键：必须 >= 当前集，否则播放器只看到 E01
         episodeCount: epCount,
         rating: Number(c.score) || 0,
         isFavorited: Boolean(c.is_default)
@@ -1441,14 +1534,18 @@ async function searchDanmu(params) {
     }
   } else {
     const animeId = stableAnimeId(identity);
-    const display = (identity.title || "未知") + " " + playerSE;
-    safeLog(true, "searchDanmu.tv.fallback", { display: display, episodeCount: epCount });
+    const display = buildLocalDisplay(identity, null);
+    safeLog(true, "searchDanmu.tv.fallback", {
+      display: display,
+      playerSE: playerSE,
+      episodeCount: epCount
+    });
     animes.push({
       animeId: animeId,
       bangumiId: String(animeId),
       animeTitle: "★ " + display,
       type: "tvseries",
-      typeDescription: "当前 " + playerSE + " · 详情展开本季全集",
+      typeDescription: "当前 " + playerSE + " · 本季全集",
       imageUrl: "",
       startDate: identity.year ? identity.year + "-01-01" : "",
       episodeCount: epCount,
@@ -1458,8 +1555,11 @@ async function searchDanmu(params) {
   }
 
   safeLog(true, "searchDanmu.tv.final", {
+    MediaType: "episode",
+    Title: animes[0] && animes[0].animeTitle,
+    Season: identity.season,
+    Episode: identity.episode,
     playerSE: playerSE,
-    selected: animes[0] && animes[0].animeTitle,
     n: animes.length,
     episodeCount: epCount
   });
@@ -1705,6 +1805,7 @@ if (typeof module !== "undefined" && module.exports) {
       resolveSeasonEpisode: resolveSeasonEpisode,
       cacheKey: cacheKey,
       buildQuery: buildQuery,
+      buildLocalDisplay: buildLocalDisplay,
       versionKeyToIdPart: versionKeyToIdPart,
       formatSE: formatSE,
       resolveSeasonEpisodeCount: resolveSeasonEpisodeCount,
