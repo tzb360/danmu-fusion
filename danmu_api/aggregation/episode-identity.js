@@ -131,11 +131,31 @@ export function buildSourceFileLabel({
       `S${String(sNum).padStart(2, '0')}E${String(eNum).padStart(2, '0')}`
     );
   }
-  let name = parts.join('.') + '.xml';
-  // 若有真实 url 短 id 可附带
-  if (url && String(url).length < 40 && !String(url).includes('://')) {
-    name = `${parts.join('.')}.${String(url).replace(/[^\w.-]/g, '_')}.xml`;
+  const provider = String(source || 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_') || 'unknown';
+  parts.push(provider);
+  // 尽可能保留平台原始资源标识，避免同一媒体的多个实际弹幕文件同名。
+  let resourceId = null;
+  if (url) {
+    const raw = String(url);
+    if (raw.length < 80 && !raw.includes('://')) {
+      resourceId = raw;
+    } else {
+      const queryId = raw.match(/[?&](?:vid|tvid|cid|aid|id)=([^&#]+)/i)?.[1];
+      const pathId = raw.split(/[?#]/)[0].split('/').filter(Boolean).pop();
+      resourceId = queryId || pathId || null;
+    }
   }
+  if (resourceId) {
+    let decodedId = String(resourceId);
+    try { decodedId = decodeURIComponent(decodedId); } catch { /* keep raw id */ }
+    const safeId = decodedId
+      .replace(/[^\w.-]+/g, '_')
+      .slice(0, 64);
+    if (safeId) parts.push(safeId);
+  }
+  let name = parts.join('.') + '.xml';
   return name;
 }
 

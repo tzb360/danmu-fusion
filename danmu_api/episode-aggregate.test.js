@@ -76,6 +76,7 @@ test('movie source file label has no S01E01', () => {
   });
   assert.ok(!/S\d+E\d+/i.test(name), name);
   assert.ok(name.includes('2006'), name);
+  assert.ok(name.includes('bilibili'), name);
   assert.ok(name.endsWith('.xml'), name);
 });
 
