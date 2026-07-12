@@ -109,13 +109,27 @@ export async function handleForwardDanmaku(req, url) {
 
     const fwd = await getForwardDanmaku(url);
 
+    // 无弹幕时仍返回 404，但必须带齐 media/candidates/meta，
+    // 否则调用方无法验证 movie/tv 分流与匹配链路（通用流程可观测性）
     if (!fwd.success && (!fwd.payload?.comments || !fwd.payload.comments.length)) {
+      const emptyPayload = fwd.payload || {};
       return jsonResponse({
         errorCode: 404,
         success: false,
         errorMessage: fwd.errorMessage || 'no danmaku',
         count: 0,
-        comments: []
+        comments: [],
+        media: emptyPayload.media || null,
+        candidates: emptyPayload.candidates || [],
+        selected_version: emptyPayload.selected_version || null,
+        meta: emptyPayload.meta || {
+          media: emptyPayload.media || fwd.internal?.media || null,
+          key: fwd.internal?.key || null,
+          sources: fwd.internal?.sources || [],
+          sources_detail: fwd.internal?.sources || [],
+          processing_ms: fwd.internal?.processing_ms || null,
+          errorMessage: fwd.errorMessage || 'no danmaku'
+        }
       }, 404);
     }
 
