@@ -174,6 +174,8 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
         removed: pipelineResult.stats?.removed,
         removed_by_reason: pipelineResult.stats?.removed_by_reason || {}
       },
+      providerStats: pipelineResult.providerStats || null,
+      danmuStats: pipelineResult.danmuStats || null,
       comments: pipelineResult.comments || []
     });
     return identity.key;
@@ -207,7 +209,9 @@ export async function tryLoadEpisodeCache(meta = {}) {
         comments: finalizePlayerComments(cached.comments),
         stats: cached.stats,
         sources: cached.sources,
-        identity: cached.identity
+        identity: cached.identity,
+        providerStats: cached.providerStats || null,
+        danmuStats: cached.danmuStats || null
       };
     }
   } catch { /* ignore */ }

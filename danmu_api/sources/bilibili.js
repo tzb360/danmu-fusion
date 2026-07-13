@@ -16,8 +16,6 @@ import { searchBangumiData } from '../utils/bangumi-data-util.js';
 // =====================
 export default class BilibiliSource extends BaseSource {
   // WBI 签名相关常量
-  static WBI_MIXIN_KEY_CACHE = { key: null, timestamp: 0 };
-  static WBI_MIXIN_KEY_CACHE_TTL = 3600; // 缓存1小时
   static WBI_MIXIN_KEY_TABLE = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
     33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
@@ -71,14 +69,7 @@ export default class BilibiliSource extends BaseSource {
    * 获取 WBI mixin key（带缓存）
    */
   async _getWbiMixinKey() {
-    const now = Math.floor(Date.now() / 1000);
-    const cache = BilibiliSource.WBI_MIXIN_KEY_CACHE;
-
-    if (cache.key && (now - cache.timestamp < BilibiliSource.WBI_MIXIN_KEY_CACHE_TTL)) {
-      return cache.key;
-    }
-
-    log("info", "[Bilibili] WBI mixin key 已过期或不存在，正在获取新的...");
+    log("info", "[Bilibili] 正在获取本次请求的 WBI mixin key...");
 
     try {
       const navResp = await httpGet("https://api.bilibili.com/x/web-interface/nav", {
@@ -107,9 +98,6 @@ export default class BilibiliSource extends BaseSource {
         .map(i => (imgKey + subKey)[i])
         .join('')
         .substring(0, 32);
-
-      cache.key = mixinKey;
-      cache.timestamp = now;
 
       log("info", "[Bilibili] 成功获取新的 WBI mixin key");
       return mixinKey;

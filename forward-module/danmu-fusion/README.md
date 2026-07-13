@@ -2,7 +2,7 @@
 
 **模块名称：** Danmu Fusion（弹幕融合）  
 **模块 ID：** `tzb360.danmu.fusion`  
-**版本：** 1.2.2
+**版本：** 1.2.3
 **作者：** tzb360（仅 `author` 字段）  
 **网站：** [https://github.com/tzb360/danmu_api](https://github.com/tzb360/danmu_api)
 

@@ -21,6 +21,10 @@ let fsModule = null;
 let pathModule = null;
 let cacheDirResolved = null;
 
+function cloneEntry(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
 function canUseFs() {
   try {
     return typeof process !== 'undefined' && Boolean(process.versions?.node);
@@ -87,12 +91,12 @@ function filePathForKey(dir, key) {
  * @returns {object|null}
  */
 export function getEpisodeCacheMemory(key) {
-  return memoryIndex.get(key) || null;
+  return cloneEntry(memoryIndex.get(key) || null);
 }
 
 export function setEpisodeCacheMemory(entry) {
   if (!entry?.key) return;
-  memoryIndex.set(entry.key, entry);
+  memoryIndex.set(entry.key, cloneEntry(entry));
   // 简单上限
   if (memoryIndex.size > 300) {
     const first = memoryIndex.keys().next().value;
@@ -135,7 +139,7 @@ export async function loadEpisodeCache(key) {
       return null;
     }
     setEpisodeCacheMemory(parsed);
-    return parsed;
+    return cloneEntry(parsed);
   } catch (error) {
     log('warn', `[EpisodeCache] load failed ${key}: ${error.message}`);
   }
@@ -309,6 +313,8 @@ export async function getEpisodeCacheDetail(key) {
     sources_detail,
     media: entry.media || null,
     stats: entry.stats || {},
+    providerStats: entry.providerStats || null,
+    danmuStats: entry.danmuStats || null,
     removed_by_reason: entry.stats?.removed_by_reason || {},
     sample_comments: (entry.comments || []).slice(0, 10)
   };

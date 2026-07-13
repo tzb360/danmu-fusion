@@ -10,8 +10,7 @@ import {
   findTitleById,
   findAnimeTitleById,
   getSearchCache,
-  getCommentCache,
-  setCommentCache
+  getCommentCache
 } from '../utils/cache-util.js';
 import { MERGE_DELIMITER } from '../utils/merge-util.js';
 import { extractEpisodeTitle } from '../utils/common-util.js';
@@ -968,14 +967,6 @@ export async function aggregateEpisode(query = {}) {
   // 仅非空结果可缓存
   if (comments.length > 0) {
     await saveEpisodeCache(entry);
-    for (const s of discovered) {
-      if (s.url) {
-        try { setCommentCache(s.url, comments); } catch { /* ignore */ }
-      }
-      if (s.full_url && s.full_url !== s.url) {
-        try { setCommentCache(s.full_url, comments); } catch { /* ignore */ }
-      }
-    }
   } else {
     log('info', `[EpisodeCache] skip empty result for ${identity.key}`);
   }

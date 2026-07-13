@@ -33,7 +33,6 @@ export default class AiyifanSource extends BaseSource {
       userAgent: this.USER_AGENT,
       configPageUrl: this.CONFIG_PAGE_API
     });
-    this.inflightDanmuRequests = new Map();
   }
 
   extractEpisodeRequestKey(id) {
@@ -405,12 +404,6 @@ export default class AiyifanSource extends BaseSource {
     log("info", `[Aiyifan] 获取弹幕: ${id}`);
 
     const requestKey = this.extractEpisodeRequestKey(id);
-    const inflightRequest = this.inflightDanmuRequests.get(requestKey);
-    if (inflightRequest) {
-      log("info", `[Aiyifan] 复用进行中的弹幕请求: ${requestKey}`);
-      return await inflightRequest;
-    }
-
     const requestPromise = (async () => {
       // 从 URL 中提取 id 参数
       const videoId = requestKey;
@@ -443,12 +436,7 @@ export default class AiyifanSource extends BaseSource {
       return danmuList;
     })();
 
-    this.inflightDanmuRequests.set(requestKey, requestPromise);
-    try {
-      return await requestPromise;
-    } finally {
-      this.inflightDanmuRequests.delete(requestKey);
-    }
+    return await requestPromise;
   }
 
   /**

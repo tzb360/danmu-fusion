@@ -10,7 +10,7 @@
       "title_zh": "弹幕融合",
       "description": "Forward 专属聚合模块：电影保持 0/0 身份、电视剧严格跟随 unionId 当前季集。",
       "requiredVersion": "0.0.2",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "author": "tzb360",
       "website": "https://github.com/tzb360/danmu_api",
       "site": "https://github.com/tzb360/danmu_api",

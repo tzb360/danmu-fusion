@@ -260,6 +260,10 @@ def check_movie(item, base, force=False):
     chain["count"] = count
     chain["key"] = meta.get("key")
     chain["display"] = media.get("display")
+    chain["trace_id"] = meta.get("trace_id")
+    chain["ProviderStats"] = meta.get("providerStats") or {}
+    chain["DanmuStats"] = meta.get("danmuStats") or {}
+    chain["cache"] = {"cached": bool(meta.get("cached")), "key": meta.get("key"), "empty_hit": bool(meta.get("empty_cache_hit"))}
     chain["provider"] = {
         "source_count": len(sources),
         "sources": [
@@ -399,6 +403,10 @@ def check_tv(item, base, season=None, episode=None, force=False):
     chain["count"] = count
     chain["key"] = meta.get("key")
     chain["display"] = media.get("display")
+    chain["trace_id"] = meta.get("trace_id")
+    chain["ProviderStats"] = meta.get("providerStats") or {}
+    chain["DanmuStats"] = meta.get("danmuStats") or {}
+    chain["cache"] = {"cached": bool(meta.get("cached")), "key": meta.get("key"), "empty_hit": bool(meta.get("empty_cache_hit"))}
     chain["provider"] = {
         "source_count": len(sources),
         "sources": [
@@ -516,6 +524,10 @@ def cache_sequence_test(base, movie_a, movie_b, tv_item):
                 "display": r.get("display"),
                 "type_ok": r.get("type_ok"),
                 "errors": r.get("errors"),
+                "trace_id": r.get("trace_id"),
+                "ProviderStats": r.get("ProviderStats"),
+                "DanmuStats": r.get("DanmuStats"),
+                "cache": r.get("cache"),
             }
             for name, r in results
         ],
@@ -618,6 +630,10 @@ def main():
                 "danmaku_ok": r.get("danmaku_ok"),
                 "pipeline_ok": r.get("pipeline_ok"),
                 "errors": r.get("errors"),
+                "trace_id": r.get("trace_id"),
+                "ProviderStats": r.get("ProviderStats"),
+                "DanmuStats": r.get("DanmuStats"),
+                "cache": r.get("cache"),
                 "sources": (r.get("provider") or {}).get("sources"),
             }
             for r in movie_results

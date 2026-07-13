@@ -70,9 +70,6 @@ const otherSource = new OtherSource();
 const doubanSource = new DoubanSource(tencentSource, iqiyiSource, youkuSource, bilibiliSource, miguSource);
 const tmdbSource = new TmdbSource(doubanSource);
 
-// 用于聚合请求的去重Map
-const PENDING_DANMAKU_REQUESTS = new Map();
-
 function normalizeDurationValue(rawValue) {
   const duration = Number(rawValue || 0);
   if (!Number.isFinite(duration) || duration <= 0) return 0;
@@ -1999,20 +1996,6 @@ async function fetchMergedComments(url, animeTitle, commentId) {
 
     if (!sourceName || !realId) return [];
 
-    // 构建去重Key
-    const pendingKey = `${sourceName}:${realId}`;
-
-    // 检查是否有正在进行的相同请求（请求合并）
-    if (PENDING_DANMAKU_REQUESTS.has(pendingKey)) {
-        log("info", `[Merge] 复用正在进行的请求: ${pendingKey}`);
-        try {
-            const list = await PENDING_DANMAKU_REQUESTS.get(pendingKey);
-            return list || [];
-        } catch (e) {
-            return [];
-        }
-    }
-
     // 定义请求任务
     const fetchTask = sourceLogContext.run(toLogSourceName(sourceName), async () => {
         let sourceInstance = null;
@@ -2062,15 +2045,7 @@ async function fetchMergedComments(url, animeTitle, commentId) {
         return [];
     });
 
-    // 将任务加入队列
-    PENDING_DANMAKU_REQUESTS.set(pendingKey, fetchTask);
-
-    try {
-        return await fetchTask;
-    } finally {
-        // 任务完成后移除队列
-        PENDING_DANMAKU_REQUESTS.delete(pendingKey);
-    }
+    return await fetchTask;
   });
 
   // 等待所有源请求完成

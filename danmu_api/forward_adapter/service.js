@@ -947,6 +947,10 @@ export async function getForwardDanmaku(queryInput = {}) {
   // 仅识别：返回候选版本列表（模块负责展示/切换，不在此固定唯一结果）
   if (query.resolve_only) {
     const elapsed = Date.now() - started;
+    ctx.providerStats.searchedProviderCount = new Set((resolved.allCandidates || []).map(a => a?.source).filter(Boolean)).size;
+    ctx.providerStats.candidateProviderCount = new Set((resolved.animes || []).map(a => a?.source).filter(Boolean)).size;
+    ctx.providerStats.moduleStatus = 'resolved';
+    trace(ctx, 'resolve_return', { candidates: (candidates || []).length, sources: sources.length });
     log(
       'info',
       `[ForwardAdapter] resolve_only display="${media?.display || '-'}" ` +
@@ -970,7 +974,11 @@ export async function getForwardDanmaku(queryInput = {}) {
         processing_ms: elapsed,
         search_ms: searchMs,
         anime_count: animeCount,
-        source_count: sources.length
+        source_count: sources.length,
+        trace_id: traceId,
+        traceContext: ctx,
+        providerStats: ctx.providerStats,
+        danmuStats: ctx.danmuStats
       };
     }
     return wrapResult(payload, query, {
@@ -1011,6 +1019,11 @@ export async function getForwardDanmaku(queryInput = {}) {
       const elapsed = Date.now() - started;
       const presented = applyPlayerPresentation(toPlayerComments(cached.comments), { colorToWhite: query.color_to_white, forceScroll: query.force_scroll });
       const finalQueue = buildFinalDanmuStats(presented);
+      Object.assign(ctx.providerStats, cached.providerStats || {});
+      Object.assign(ctx.danmuStats, cached.danmuStats || {});
+      const cachedProviderCount = new Set((cached.sources || []).map(s => s?.source || s?.provider).filter(Boolean)).size;
+      if (!ctx.providerStats.searchedProviderCount) ctx.providerStats.searchedProviderCount = cachedProviderCount;
+      if (!ctx.providerStats.candidateProviderCount) ctx.providerStats.candidateProviderCount = cachedProviderCount;
       ctx.providerStats.rawDanmuCount = Number(cached.stats?.total_before || 0);
       ctx.providerStats.mergedDanmuCount = Number(cached.stats?.total_after || cached.comments.length);
       ctx.providerStats.filteredDanmuCount = ctx.providerStats.mergedDanmuCount;
@@ -1020,6 +1033,7 @@ export async function getForwardDanmaku(queryInput = {}) {
       ctx.danmuStats.providerRawDanmuCount = ctx.providerStats.rawDanmuCount;
       ctx.danmuStats.aggregationInputCount = ctx.providerStats.rawDanmuCount;
       ctx.danmuStats.mergedDanmuCount = ctx.providerStats.mergedDanmuCount;
+      ctx.danmuStats.deduplicatedDanmuCount = ctx.providerStats.mergedDanmuCount;
       ctx.danmuStats.filteredDanmuCount = ctx.providerStats.filteredDanmuCount;
       finalizeDanmuStats(ctx, finalQueue);
       trace(ctx, 'cache_hit', { key: cached.key, final: finalQueue.final });
@@ -1037,6 +1051,7 @@ export async function getForwardDanmaku(queryInput = {}) {
               sources_detail: cached.sources || [],
               stats: cached.stats || {},
               trace_id: traceId,
+              traceContext: ctx,
               providerStats: ctx.providerStats,
               danmuStats: ctx.danmuStats,
               processing_ms: elapsed,
@@ -1068,6 +1083,10 @@ export async function getForwardDanmaku(queryInput = {}) {
   if (!sources.length) {
     // 无来源：Forward 不允许「裸单源旁路」，直接空结果 + media
     const emptyMedia = media || buildMatchedMediaMetadata(query, [], resolved.filterSteps || [], []);
+    ctx.providerStats.searchedProviderCount = new Set((resolved.allCandidates || []).map(a => a?.source).filter(Boolean)).size;
+    ctx.providerStats.candidateProviderCount = new Set((resolved.animes || []).map(a => a?.source).filter(Boolean)).size;
+    ctx.providerStats.moduleStatus = 'empty';
+    trace(ctx, 'empty_return', { key: cacheProbe.key });
     const emptyMeta = {
       cached: false,
       empty_cache_hit: false,
@@ -1089,6 +1108,7 @@ export async function getForwardDanmaku(queryInput = {}) {
       filter_steps: resolved.filterSteps || emptyMedia?.filter_steps || [],
       stats: { total_before: 0, total_after: 0, removed: 0 },
       trace_id: traceId,
+      traceContext: ctx,
       providerStats: ctx.providerStats,
       danmuStats: ctx.danmuStats,
       final_count: 0
@@ -1136,6 +1156,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     timeline: true,
     strict_sources: true,
     trace_id: traceId,
+    traceContext: ctx,
     sources: sources.map((s) => {
       const fileName =
         s.fileName ||
@@ -1190,8 +1211,20 @@ export async function getForwardDanmaku(queryInput = {}) {
   ctx.danmuStats.providerRawDanmuCount = ctx.providerStats.rawDanmuCount;
   ctx.danmuStats.aggregationInputCount = ctx.providerStats.rawDanmuCount;
   ctx.danmuStats.mergedDanmuCount = Number(agg.stats?.total_after || 0);
+  ctx.danmuStats.deduplicatedDanmuCount = Number(agg.stats?.total_after || 0);
   ctx.danmuStats.filteredDanmuCount = Number(agg.stats?.total_after || 0);
   finalizeDanmuStats(ctx, finalDanmuStats);
+  ctx.danmuStats.forwardParsedCount = finalDanmuStats.final;
+  await autoSaveEpisodeCache(cacheIdentity, {
+    comments: agg.comments || [],
+    sources: agg.sources || [],
+    sources_detail: agg.sources || [],
+    stats: agg.stats || {},
+    total_before: agg.stats?.total_before || 0,
+    total_after: agg.stats?.total_after || 0,
+    providerStats: ctx.providerStats,
+    danmuStats: ctx.danmuStats
+  });
   trace(ctx, 'adapter_return', { final: comments.length });
   const elapsed = Date.now() - started;
 
@@ -1226,6 +1259,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     anime_count: animeCount,
     source_count: sourcesDetail.length,
     trace_id: traceId,
+    traceContext: ctx,
     providerStats: ctx.providerStats,
     danmuStats: ctx.danmuStats,
     /*providerStats: {

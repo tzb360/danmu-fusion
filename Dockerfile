@@ -1,6 +1,9 @@
 # 使用官方 Node.js 22 轻量版镜像作为基础镜像
 FROM node:22-alpine
 
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF
+
 # 设置工作目录为项目根目录
 WORKDIR /app
 

@@ -12,17 +12,6 @@ import { searchBangumiData } from '../utils/bangumi-data-util.js';
 // 获取Animeko弹幕（https://github.com/open-ani/animeko）
 // =====================
 
-// 接口健康状态缓存 (全局共享，跨请求持久化，实现业务级智能路由)
-const API_HEALTH = {
-  danmu: null,
-  subject: null
-};
-
-// Animeko 详情数据短效缓存 (用于跨阶段与跨搜索请求共享数据，避免短时间内重复网络请求)
-const SUBJECT_CACHE = new Map();
-const SUBJECT_CACHE_TTL = 3 * 60 * 1000; // 缓存有效期：3 分钟 (180000 毫秒)
-const SUBJECT_CACHE_MAX_SIZE = 100; // 最大缓存条目数
-
 /**
  * Animeko 源适配器 (基于 Bangumi API 搜索 + Animeko API 详情)
  * 提供深度元数据搜索、结果过滤及条目关系检测功能
@@ -203,23 +192,8 @@ export default class AnimekoSource extends BaseSource {
    * @returns {Promise<Object|null>}
    */
   async _fetchAnimekoSubject(subjectId) {
-    // 检查缓存是否存在且在有效期内
-    const cached = SUBJECT_CACHE.get(subjectId);
-    if (cached && (Date.now() - cached.timestamp < SUBJECT_CACHE_TTL)) {
-      return cached.data;
-    }
-
     const servers = this._getSubjectServerPriority();
-    
-    let currentUrl = API_HEALTH.subject;
-    let startIndex = servers.findIndex(s => s.url === currentUrl);
-    
-    // 初始状态与列表变更的安全校验，防止缓存失效节点导致路由异常
-    if (!currentUrl || startIndex === -1) {
-      startIndex = 0;
-      currentUrl = servers[0].url;
-      API_HEALTH.subject = currentUrl;
-    }
+    const startIndex = 0;
 
     for (let i = 0; i < servers.length; i++) {
       const server = servers[(startIndex + i) % servers.length];
@@ -271,23 +245,6 @@ export default class AnimekoSource extends BaseSource {
         }
 
         if (resultData) {
-          if (API_HEALTH.subject !== server.url) {
-            log("info", `[Animeko] 详情节点健康状态更新: ${API_HEALTH.subject} -> ${server.url}`);
-            API_HEALTH.subject = server.url;
-          }
-          
-          // 将成功获取的数据连同当前时间戳一并写入缓存
-          SUBJECT_CACHE.set(subjectId, {
-            data: resultData,
-            timestamp: Date.now()
-          });
-
-          // 限制最大缓存数量，执行先进先出清理
-          if (SUBJECT_CACHE.size > SUBJECT_CACHE_MAX_SIZE) {
-            const firstKey = SUBJECT_CACHE.keys().next().value;
-            SUBJECT_CACHE.delete(firstKey);
-          }
-
           return resultData;
         }
         log("warn", `[Animeko] 节点 ${server.url} 返回无效数据`);
@@ -296,8 +253,7 @@ export default class AnimekoSource extends BaseSource {
       }
     }
 
-    log("warn", `[Animeko] 所有详情节点均失败，重置健康状态至优先级首位`);
-    API_HEALTH.subject = servers[0].url;
+    log("warn", `[Animeko] 所有详情节点均失败`);
     return null;
   }
 
@@ -844,15 +800,7 @@ export default class AnimekoSource extends BaseSource {
 
     const servers = this._getDanmuServerPriority();
     
-    let currentHost = API_HEALTH.danmu;
-    let startIndex = servers.indexOf(currentHost);
-    
-    // 初始状态与列表变更的安全校验，防止缓存失效节点导致路由异常
-    if (!currentHost || startIndex === -1) {
-      startIndex = 0;
-      currentHost = servers[0];
-      API_HEALTH.danmu = currentHost;
-    }
+    const startIndex = 0;
 
     for (let i = 0; i < servers.length; i++) {
         const hostIndex = (startIndex + i) % servers.length;
@@ -870,10 +818,6 @@ export default class AnimekoSource extends BaseSource {
             if (resp && resp.data) {
                 const danmuList = resp.data.danmakuList;
                 if (danmuList && Array.isArray(danmuList)) {
-                    if (API_HEALTH.danmu !== hostUrl) {
-                        log("info", `[Animeko] 弹幕域节点健康状态更新: ${API_HEALTH.danmu} -> ${hostUrl}`);
-                        API_HEALTH.danmu = hostUrl;
-                    }
                     log("info", `[Animeko] 成功获取弹幕，共 ${danmuList.length} 条 (${hostUrl}节点)`);
                     return danmuList;
                 }
@@ -884,9 +828,7 @@ export default class AnimekoSource extends BaseSource {
         }
     }
 
-    // 所有节点轮换完毕仍未获取到数据，重置健康状态至首选节点
-    log("info", `[Animeko] 弹幕域所有降级节点均失败，重置健康状态至首选节点`);
-    API_HEALTH.danmu = servers[0];
+    log("info", `[Animeko] 弹幕域所有降级节点均失败`);
 
     return [];
   }

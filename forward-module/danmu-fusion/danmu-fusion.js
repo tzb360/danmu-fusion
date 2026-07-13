@@ -2,7 +2,7 @@
  * Danmu Fusion · 弹幕融合
  * Forward 专用弹幕聚合播放模块
  *
- * 版本：1.2.2
+ * 版本：1.2.3
  *
  * 架构（电影 / 电视剧完全分离）：
  *
@@ -19,7 +19,7 @@
 WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.2.2",
+  version: "1.2.3",
   requiredVersion: "0.0.2",
   description:
     "Danmu Fusion：按 unionId 分流 movie/tv。电影仅标题+年份；电视剧按季集动态请求，详情展开本季全集。",
@@ -127,7 +127,7 @@ WidgetMetadata = {
 };
 
 // ---------------------------------------------------------------------------
-const FUSION_UA = "DanmuFusion/1.2.1 (tzb360; Forward)";
+const FUSION_UA = "DanmuFusion/1.2.3 (tzb360; Forward)";
 // v5：unionId 分流 movie/tv；缓存只绑弹幕，无类型状态
 const CACHE_PREFIX = "tzb360.danmu.fusion.v5:";
 /** 本季分集列表上限（未知总集数时兜底，保证当前集可被选中） */
@@ -1180,7 +1180,8 @@ async function httpGetRetry(url, cfg, tag) {
 function cacheGet(key) {
   try {
     if (typeof Widget !== "undefined" && Widget.storage && Widget.storage.get) {
-      return Widget.storage.get(CACHE_PREFIX + key);
+      const value = Widget.storage.get(CACHE_PREFIX + key);
+      return value == null ? null : JSON.parse(JSON.stringify(value));
     }
   } catch (e) {}
   return null;
@@ -1189,7 +1190,7 @@ function cacheGet(key) {
 function cacheSet(key, val) {
   try {
     if (typeof Widget !== "undefined" && Widget.storage && Widget.storage.set) {
-      Widget.storage.set(CACHE_PREFIX + key, val);
+      Widget.storage.set(CACHE_PREFIX + key, JSON.parse(JSON.stringify(val)));
     }
   } catch (e) {}
 }
@@ -1292,7 +1293,17 @@ function adaptComments(payload) {
     count: clean.length,
     comments: clean,
     finalDanmuStats: positions,
-    providerStats: payload && payload.meta && payload.meta.providerStats ? payload.meta.providerStats : null
+    trace_id: payload && payload.meta ? payload.meta.trace_id || null : null,
+    providerStats: payload && payload.meta && payload.meta.providerStats ? payload.meta.providerStats : null,
+    danmuStats: payload && payload.meta && payload.meta.danmuStats
+      ? Object.assign({}, payload.meta.danmuStats, {
+          forwardParsedCount: clean.length,
+          finalQueueCount: clean.length,
+          normalCount: positions.normal,
+          topCount: positions.top,
+          bottomCount: positions.bottom
+        })
+      : null
   };
 }
 
@@ -1779,7 +1790,9 @@ async function getCommentsById(params) {
       parsedCount: adapted.count,
       finalQueueCount: adapted.finalDanmuStats.final,
       finalPositions: adapted.finalDanmuStats,
-      providerStats: adapted.providerStats
+      providerStats: adapted.providerStats,
+      danmuStats: adapted.danmuStats,
+      trace_id: adapted.trace_id
     });
 
     if (raw && raw.media) {
