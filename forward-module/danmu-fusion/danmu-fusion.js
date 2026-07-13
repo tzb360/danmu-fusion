@@ -1280,7 +1280,20 @@ function adaptComments(payload) {
     if (c.t != null) item.t = c.t;
     clean.push(item);
   }
-  return { count: clean.length, comments: clean };
+  const positions = { normal: 0, top: 0, bottom: 0, final: clean.length };
+  for (const c of clean) {
+    const mode = String(c.p || "").split(",")[1];
+    if (mode === "5") positions.top += 1;
+    else if (mode === "4") positions.bottom += 1;
+    else positions.normal += 1;
+  }
+  // 诊断与播放器共享同一份已解析队列，不能用服务端原始/XML 中间统计替代。
+  return {
+    count: clean.length,
+    comments: clean,
+    finalDanmuStats: positions,
+    providerStats: payload && payload.meta && payload.meta.providerStats ? payload.meta.providerStats : null
+  };
 }
 
 /** 调试：打印每个来源明细（不进播放器 UI） */
@@ -1762,7 +1775,11 @@ async function getCommentsById(params) {
     safeLog(true, "getComments.result", {
       Candidate: retEp != null ? formatSE(identity.season, retEp) : formatSE(identity.season, identity.episode),
       Final: formatSE(identity.season, identity.episode),
-      count: adapted.count
+      apiCount: raw && raw.count,
+      parsedCount: adapted.count,
+      finalQueueCount: adapted.finalDanmuStats.final,
+      finalPositions: adapted.finalDanmuStats,
+      providerStats: adapted.providerStats
     });
 
     if (raw && raw.media) {
