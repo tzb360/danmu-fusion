@@ -11,6 +11,7 @@
 import { log } from '../utils/log-util.js';
 import { globals } from '../configs/globals.js';
 import { searchAnime, getBangumi, getComment } from '../apis/dandan-api.js';
+import { resolveAnimeByIdFromDetailStore } from '../utils/cache-util.js';
 import { tryLoadEpisodeCache, autoSaveEpisodeCache } from '../aggregation/request-pipeline.js';
 import {
   aggregateEpisode,
@@ -41,7 +42,8 @@ import {
   sanitizeEpisodeList,
   sanitizeAnimeList,
   toPlayerComments,
-  applyPlayerPresentation
+  applyPlayerPresentation,
+  buildFinalDanmuStats
 } from './format.js';
 
 export function parseForwardQuery(urlOrObject = {}) {
@@ -539,7 +541,9 @@ async function resolveMultiSources(query) {
       `${movie ? '' : `S${season}E${episode} `}year=${query.year || '-'} tmdb=${query.tmdb_id || '-'} imdb=${query.imdb_id || '-'}`
   );
   const t0 = Date.now();
-  const searchRes = await searchAnime(searchUrl);
+  // 搜索详情只属于本请求；绝不能在异步搜索结束后回读 globals.animes。
+  const requestDetailStore = new Map();
+  const searchRes = await searchAnime(searchUrl, null, null, requestDetailStore);
   const searchBody = JSON.parse(await searchRes.text());
   const searchMs = Date.now() - t0;
   const animes = searchBody.animes || [];
@@ -572,40 +576,27 @@ async function resolveMultiSources(query) {
     };
   };
 
-  // globals 中已有完整结构
-  if (Array.isArray(globals.animes)) {
-    for (const a of globals.animes) {
-      if (!a?.links?.length) continue;
-      if (query.title && !titleLooksMatch(a.animeTitle, query.title) && !titleLooksMatch(a.animeTitle, keyword)) {
-        continue;
-      }
-      const id = a.bangumiId || a.animeId;
-      if (id && seenIds.has(String(id))) continue;
-      if (id) seenIds.add(String(id));
-      detailed.push(mergeSearchMeta(a));
-    }
-  }
-
-  // 对搜索结果补全 links
+  // 对本请求的搜索结果补全 links。detailStore 在 searchAnime 内逐源填充，
+  // 因而不会混入其他请求的全局缓存条目。
   for (const a of animes.slice(0, 40)) {
     const id = a.bangumiId || a.animeId;
     if (!id || seenIds.has(String(id))) continue;
     try {
-      const g = (globals.animes || []).find(
-        x => String(x.bangumiId || x.animeId) === String(id)
-      );
+      const g =
+        resolveAnimeByIdFromDetailStore(id, requestDetailStore, a.source) ||
+        resolveAnimeByIdFromDetailStore(id, requestDetailStore);
       if (g?.links?.length) {
-        detailed.push(g);
+        detailed.push(mergeSearchMeta(g));
         seenIds.add(String(id));
         continue;
       }
-      const detailRes = await getBangumi(String(id));
+      const detailRes = await getBangumi(String(id), requestDetailStore, a.source);
       const detailBody = JSON.parse(await detailRes.text());
-      const g2 = (globals.animes || []).find(
-        x => String(x.bangumiId || x.animeId) === String(id)
-      );
+      const g2 =
+        resolveAnimeByIdFromDetailStore(id, requestDetailStore, a.source) ||
+        resolveAnimeByIdFromDetailStore(id, requestDetailStore);
       if (g2?.links?.length) {
-        detailed.push(g2);
+        detailed.push(mergeSearchMeta(g2));
         seenIds.add(String(id));
       } else if (detailBody?.bangumi) {
         detailed.push({
@@ -894,6 +885,7 @@ async function resolveMultiSources(query) {
 export async function getForwardDanmaku(queryInput = {}) {
   const started = Date.now();
   const query = parseForwardQuery(queryInput);
+  const traceId = query.trace_id || `fw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const movie = isMovieQuery(query);
   // 电影：不强制 S1E1；电视剧：1-based
   const season = movie ? null : toSeasonNum(query.season);
@@ -902,7 +894,7 @@ export async function getForwardDanmaku(queryInput = {}) {
 
   log(
     'info',
-    `[ForwardAdapter] recv type=${movie ? 'movie' : 'tv'} title="${query.title || ''}" ` +
+    `[ForwardAdapter][trace=${traceId}] request_start type=${movie ? 'movie' : 'tv'} title="${query.title || ''}" ` +
       `tmdb=${query.tmdb_id || '-'} year=${query.year || '-'} ` +
       `season=${movie ? 'n/a' : season} episode=${movie ? 'n/a' : episode} ` +
       `raw_season=${query.season} raw_episode=${query.episode}`
@@ -1160,6 +1152,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     colorToWhite: query.color_to_white,
     forceScroll: query.force_scroll
   });
+  const finalDanmuStats = buildFinalDanmuStats(comments);
   const elapsed = Date.now() - started;
 
   const sourcesDetail = (agg.sources || []).map((s, i) => ({
@@ -1187,10 +1180,24 @@ export async function getForwardDanmaku(queryInput = {}) {
       pipeline_ms: elapsed,
       search_ms: searchMs,
       color_to_white: query.color_to_white,
-      force_scroll: query.force_scroll
+      force_scroll: query.force_scroll,
+      final_queue: finalDanmuStats
     },
     anime_count: animeCount,
     source_count: sourcesDetail.length,
+    providerStats: {
+      // moduleProviderCount 不在服务端推断；它是模块生命周期指标。
+      searchedProviderCount: new Set((resolved.allCandidates || []).map(a => a?.source).filter(Boolean)).size,
+      candidateProviderCount: new Set((resolved.animes || []).map(a => a?.source).filter(Boolean)).size,
+      usableSourceCount: sourcesDetail.filter(s => Number(s.count_used ?? s.count_after ?? s.count_raw ?? 0) > 0).length,
+      failedSourceCount: sourcesDetail.filter(s => s.status === 'failed' || s.error).length,
+      emptySourceCount: sourcesDetail.filter(s => Number(s.count_raw || 0) === 0 && !s.error).length,
+      rejectedCandidateCount: (resolved.filterSteps || []).reduce((n, s) => n + Number(s.rejected || 0), 0),
+      rawDanmuCount: Number(agg.stats?.total_before || 0),
+      deduplicatedDanmuCount: Number(agg.stats?.total_after || 0),
+      finalDanmuCount: finalDanmuStats.final,
+      finalPositionCounts: finalDanmuStats
+    },
     pipeline: 'match→aggregate→dedupe→color→scroll→return'
   };
 

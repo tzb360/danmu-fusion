@@ -5,10 +5,25 @@ import {
   stripSourceFromP,
   toPlayerComment,
   toPlayerComments,
+  buildFinalDanmuStats,
   buildForwardDanmakuPayload,
   toPlayerXml,
   toPlayerAss
 } from './format.js';
+
+test('final presentation stats are calculated from the returned player queue', () => {
+  const raw = [
+    { p: '1,1,1', m: 'normal' },
+    { p: '2,5,2', m: 'top' },
+    { p: '3,4,3', m: 'bottom' }
+  ];
+  const unchanged = buildFinalDanmuStats(raw);
+  assert.deepEqual(unchanged, { normal: 1, top: 1, bottom: 1, final: 3 });
+
+  const converted = buildFinalDanmuStats(raw, { forceScroll: true, colorToWhite: true });
+  assert.deepEqual(converted, { normal: 3, top: 0, bottom: 0, final: 3 });
+  assert.equal(converted.normal + converted.top + converted.bottom, converted.final);
+});
 
 test('sanitizePlayerTitle removes source decorations', () => {
   assert.equal(sanitizePlayerTitle('【renren】第10集'), '第10集');
