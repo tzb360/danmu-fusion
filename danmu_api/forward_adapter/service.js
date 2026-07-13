@@ -12,6 +12,7 @@ import { log } from '../utils/log-util.js';
 import { globals } from '../configs/globals.js';
 import { searchAnime, getBangumi, getComment } from '../apis/dandan-api.js';
 import { resolveAnimeByIdFromDetailStore } from '../utils/cache-util.js';
+import { createTraceContext, trace, finalizeDanmuStats } from './trace-context.js';
 import { tryLoadEpisodeCache, autoSaveEpisodeCache } from '../aggregation/request-pipeline.js';
 import {
   aggregateEpisode,
@@ -885,7 +886,8 @@ async function resolveMultiSources(query) {
 export async function getForwardDanmaku(queryInput = {}) {
   const started = Date.now();
   const query = parseForwardQuery(queryInput);
-  const traceId = query.trace_id || `fw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const ctx = createTraceContext(queryInput.trace_id || queryInput.traceId);
+  const traceId = ctx.trace_id;
   const movie = isMovieQuery(query);
   // 电影：不强制 S1E1；电视剧：1-based
   const season = movie ? null : toSeasonNum(query.season);
@@ -899,6 +901,7 @@ export async function getForwardDanmaku(queryInput = {}) {
       `season=${movie ? 'n/a' : season} episode=${movie ? 'n/a' : episode} ` +
       `raw_season=${query.season} raw_episode=${query.episode}`
   );
+  trace(ctx, 'request_start', { type: movie ? 'movie' : 'tv', tmdb_id: query.tmdb_id, season, episode });
 
   if (!titleHint && !query.episode_id && !query.anime_id) {
     const err = new TypeError('require title, tmdb_id, movie_id, imdb_id or episode_id');
@@ -933,6 +936,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     type: movie ? 'movie' : query.type || 'tv',
     is_movie: movie
   });
+  trace(ctx, 'candidate_match', { candidates: resolved.animeCount, sources: resolved.sources.length });
   const { sources, searchMs, animeCount, media, candidates, selected_version } = resolved;
   const cacheProbe = {
     hit: false,
@@ -1153,6 +1157,21 @@ export async function getForwardDanmaku(queryInput = {}) {
     forceScroll: query.force_scroll
   });
   const finalDanmuStats = buildFinalDanmuStats(comments);
+  ctx.providerStats.searchedProviderCount = new Set((resolved.allCandidates || []).map(a => a?.source).filter(Boolean)).size;
+  ctx.providerStats.candidateProviderCount = new Set((resolved.animes || []).map(a => a?.source).filter(Boolean)).size;
+  ctx.providerStats.usableSourceCount = (agg.sources || []).filter(s => Number(s.count_used ?? s.count_after ?? s.count_raw ?? 0) > 0).length;
+  ctx.providerStats.failedSourceCount = (agg.sources || []).filter(s => s.status === 'failed' || s.error).length;
+  ctx.providerStats.emptySourceCount = (agg.sources || []).filter(s => Number(s.count_raw || 0) === 0 && !s.error).length;
+  ctx.providerStats.rejectedCandidateCount = (resolved.filterSteps || []).reduce((n, s) => n + Number(s.rejected || 0), 0);
+  ctx.providerStats.rawDanmuCount = Number(agg.stats?.total_before || 0);
+  ctx.providerStats.mergedDanmuCount = Number(agg.stats?.total_after || 0);
+  ctx.providerStats.filteredDanmuCount = Number(agg.stats?.total_after || 0);
+  ctx.danmuStats.providerRawDanmuCount = ctx.providerStats.rawDanmuCount;
+  ctx.danmuStats.aggregationInputCount = ctx.providerStats.rawDanmuCount;
+  ctx.danmuStats.mergedDanmuCount = Number(agg.stats?.total_after || 0);
+  ctx.danmuStats.filteredDanmuCount = Number(agg.stats?.total_after || 0);
+  finalizeDanmuStats(ctx, finalDanmuStats);
+  trace(ctx, 'adapter_return', { final: comments.length });
   const elapsed = Date.now() - started;
 
   const sourcesDetail = (agg.sources || []).map((s, i) => ({
@@ -1185,7 +1204,10 @@ export async function getForwardDanmaku(queryInput = {}) {
     },
     anime_count: animeCount,
     source_count: sourcesDetail.length,
-    providerStats: {
+    trace_id: traceId,
+    providerStats: ctx.providerStats,
+    danmuStats: ctx.danmuStats,
+    /*providerStats: {
       // moduleProviderCount 不在服务端推断；它是模块生命周期指标。
       searchedProviderCount: new Set((resolved.allCandidates || []).map(a => a?.source).filter(Boolean)).size,
       candidateProviderCount: new Set((resolved.animes || []).map(a => a?.source).filter(Boolean)).size,
@@ -1197,7 +1219,7 @@ export async function getForwardDanmaku(queryInput = {}) {
       deduplicatedDanmuCount: Number(agg.stats?.total_after || 0),
       finalDanmuCount: finalDanmuStats.final,
       finalPositionCounts: finalDanmuStats
-    },
+    },*/
     pipeline: 'match→aggregate→dedupe→color→scroll→return'
   };
 
