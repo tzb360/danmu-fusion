@@ -724,6 +724,7 @@ function buildMergeSources(fetchResults) {
  *   → 质量排序 → 分源清洗合并 → 最终上限 → 缓存保护
  */
 export async function aggregateEpisode(query = {}) {
+  const traceId = query.trace_id || '-';
   const identity = buildEpisodeIdentity(query);
   const force = query.force === true || query.refresh === true;
   const guardConfig = getGuardConfig();
@@ -731,7 +732,7 @@ export async function aggregateEpisode(query = {}) {
   if (!force) {
     const cached = await loadEpisodeCache(identity.key);
     if (cached?.comments?.length) {
-      log('info', `[EpisodeAggregate] cache hit ${identity.key} (${cached.comments.length})`);
+      log('info', `[EpisodeAggregate][trace=${traceId}] cache hit ${identity.key} (${cached.comments.length})`);
       return {
         success: true,
         cached: true,
@@ -766,7 +767,7 @@ export async function aggregateEpisode(query = {}) {
     };
   }
 
-  log('info', `[EpisodeAggregate] ${identity.key} discovering ${discovered.length} sources: ${discovered.map(s => `${s.source}:${s.anime_title || ''}`).join(' | ')}`);
+  log('info', `[EpisodeAggregate][trace=${traceId}] ${identity.key} discovering ${discovered.length} sources: ${discovered.map(s => `${s.source}:${s.anime_title || ''}`).join(' | ')}`);
   for (const s of discovered) {
     log('info', `[EpisodeAggregate][source] platform=${s.source} title=${s.anime_title || '-'} ep=${s.episode_title || '-'} url=${String(s.url || '').slice(0, 80)}`);
   }
@@ -792,7 +793,7 @@ export async function aggregateEpisode(query = {}) {
   for (const fr of fetchResults) {
     log(
       'info',
-      `[EpisodeAggregate][count] source=${fr.source} raw=${fr.count_raw || 0} err=${fr.error || '-'} title=${fr.anime_title || '-'}`
+      `[EpisodeAggregate][trace=${traceId}][count] source=${fr.source} raw=${fr.count_raw || 0} err=${fr.error || '-'} title=${fr.anime_title || '-'}`
     );
   }
 

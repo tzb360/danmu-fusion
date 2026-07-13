@@ -1135,6 +1135,7 @@ export async function getForwardDanmaku(queryInput = {}) {
     force: query.force === true,
     timeline: true,
     strict_sources: true,
+    trace_id: traceId,
     sources: sources.map((s) => {
       const fileName =
         s.fileName ||
