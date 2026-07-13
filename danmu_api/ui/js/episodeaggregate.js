@@ -71,6 +71,8 @@ function renderEpisodeAggregateResult(result) {
         : '<li>无</li>';
 
     const detailList = result.sources_detail || result.sources || [];
+    const ps = result.providerStats || result.provider_stats || {};
+    const ds = result.danmuStats || result.danmu_stats || {};
     const isMovie = id.is_movie === true || id.type === 'movie' || String(result.key || '').includes(':movie');
     const sourcesHtml = detailList.length
         ? detailList.map(function(s) {
@@ -121,6 +123,9 @@ function renderEpisodeAggregateResult(result) {
         + '<div class="stats-card"><span>来源数</span><strong>' + escapeHtml(detailList.length) + '</strong></div>'
         + '<div class="stats-card"><span>原始合计</span><strong>' + escapeHtml(result.stats?.total_before ?? result.total_before ?? 0) + '</strong></div>'
         + '<div class="stats-card"><span>合并后</span><strong>' + escapeHtml(result.count ?? result.stats?.total_after ?? result.total_after ?? 0) + '</strong></div>'
+        + '<div class="stats-card"><span>已查询平台</span><strong>' + escapeHtml(ps.searchedProviderCount ?? '-') + '</strong></div>'
+        + '<div class="stats-card"><span>可用/失败资源</span><strong>' + escapeHtml((ps.usableSourceCount ?? '-') + ' / ' + (ps.failedSourceCount ?? '-')) + '</strong></div>'
+        + '<div class="stats-card"><span>最终播放队列</span><strong>' + escapeHtml(ds.finalQueueCount ?? ps.finalDanmuCount ?? result.count ?? 0) + '</strong></div>'
         + '</div>'
         + '<h4>每个来源的原始弹幕文件</h4>'
         + sourcesHtml
@@ -149,6 +154,8 @@ async function showEpisodeAggregateDetail(encodedKey) {
                 removed_by_reason: d.removed_by_reason,
                 ...(d.stats || {})
             },
+            providerStats: d.providerStats || d.provider_stats,
+            danmuStats: d.danmuStats || d.danmu_stats,
             count: d.total_after,
             total_after: d.total_after
         });
@@ -249,6 +256,8 @@ async function refreshEpisodeAggregateCache(encodedKey) {
             display: result.media?.display,
             count: result.count,
             stats: result.meta?.stats || { total_after: result.count, total_before: result.meta?.stats?.total_before },
+            providerStats: result.meta?.providerStats,
+            danmuStats: result.meta?.danmuStats,
             sources: result.meta?.sources_detail || result.meta?.sources || result.sources_detail || [],
             sources_detail: result.meta?.sources_detail || result.meta?.sources || result.sources_detail || []
         });

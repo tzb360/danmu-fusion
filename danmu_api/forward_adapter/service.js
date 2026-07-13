@@ -1009,6 +1009,20 @@ export async function getForwardDanmaku(queryInput = {}) {
     const cached = await tryLoadEpisodeCache(cacheIdentity);
     if (cached?.comments?.length) {
       const elapsed = Date.now() - started;
+      const presented = applyPlayerPresentation(toPlayerComments(cached.comments), { colorToWhite: query.color_to_white, forceScroll: query.force_scroll });
+      const finalQueue = buildFinalDanmuStats(presented);
+      ctx.providerStats.rawDanmuCount = Number(cached.stats?.total_before || 0);
+      ctx.providerStats.mergedDanmuCount = Number(cached.stats?.total_after || cached.comments.length);
+      ctx.providerStats.filteredDanmuCount = ctx.providerStats.mergedDanmuCount;
+      ctx.providerStats.usableSourceCount = (cached.sources || []).filter(s => Number(s.count_used ?? s.count_raw ?? 0) > 0).length;
+      ctx.providerStats.failedSourceCount = (cached.sources || []).filter(s => s.status === 'failed' || s.error).length;
+      ctx.providerStats.emptySourceCount = (cached.sources || []).filter(s => Number(s.count_raw || 0) === 0 && !s.error).length;
+      ctx.danmuStats.providerRawDanmuCount = ctx.providerStats.rawDanmuCount;
+      ctx.danmuStats.aggregationInputCount = ctx.providerStats.rawDanmuCount;
+      ctx.danmuStats.mergedDanmuCount = ctx.providerStats.mergedDanmuCount;
+      ctx.danmuStats.filteredDanmuCount = ctx.providerStats.filteredDanmuCount;
+      finalizeDanmuStats(ctx, finalQueue);
+      trace(ctx, 'cache_hit', { key: cached.key, final: finalQueue.final });
       log('info', `[ForwardAdapter] cache hit ${cached.key} count=${cached.comments.length} ${elapsed}ms`);
       const payload = buildForwardDanmakuPayload({
         comments: cached.comments,
@@ -1022,6 +1036,9 @@ export async function getForwardDanmaku(queryInput = {}) {
               sources: cached.sources || [],
               sources_detail: cached.sources || [],
               stats: cached.stats || {},
+              trace_id: traceId,
+              providerStats: ctx.providerStats,
+              danmuStats: ctx.danmuStats,
               processing_ms: elapsed,
               pipeline: 'cache→present'
             }
@@ -1071,6 +1088,9 @@ export async function getForwardDanmaku(queryInput = {}) {
       sources_detail: [],
       filter_steps: resolved.filterSteps || emptyMedia?.filter_steps || [],
       stats: { total_before: 0, total_after: 0, removed: 0 },
+      trace_id: traceId,
+      providerStats: ctx.providerStats,
+      danmuStats: ctx.danmuStats,
       final_count: 0
     };
     log('info', `[ForwardAdapter][debug] empty ${JSON.stringify(emptyMeta)}`);
