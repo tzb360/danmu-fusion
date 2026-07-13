@@ -28,6 +28,32 @@ const require = createRequire(import.meta.url);
 const configDir = path.join(__dirname, '..', 'config');
 const configExampleDir = path.join(__dirname, '..', 'config_example');
 const envPath = path.join(configDir, '.env');
+const forwardModuleDir = path.join(__dirname, '..', 'forward-module', 'danmu-fusion');
+const forwardModuleAssets = new Map([
+  ['/widgets/danmu-fusion/widget.fwd', { file: 'widget.fwd', type: 'application/json; charset=utf-8' }],
+  ['/widgets/danmu-fusion/danmu-fusion.fwd', { file: 'danmu-fusion.fwd', type: 'application/json; charset=utf-8' }],
+  ['/widgets/danmu-fusion/danmu-fusion.js', { file: 'danmu-fusion.js', type: 'application/javascript; charset=utf-8' }],
+  ['/widgets/danmu-fusion/CHANGELOG.md', { file: 'CHANGELOG.md', type: 'text/markdown; charset=utf-8' }]
+]);
+
+function tryServeForwardModuleAsset(req, res) {
+  if (req.method !== 'GET') return false;
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const asset = forwardModuleAssets.get(pathname);
+  if (!asset) return false;
+  const file = path.join(forwardModuleDir, asset.file);
+  if (!fs.existsSync(file)) {
+    res.statusCode = 404;
+    res.end('Module asset not found');
+    return true;
+  }
+  res.statusCode = 200;
+  res.setHeader('Content-Type', asset.type);
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.setHeader('Content-Length', fs.statSync(file).size);
+  fs.createReadStream(file).pipe(res);
+  return true;
+}
 
 // 保存系统环境变量的副本，确保它们具有最高优先级
 const systemEnvBackup = { ...process.env };
@@ -270,6 +296,7 @@ process.on('SIGINT', cleanupWatcher);
 function createServer() {
   return http.createServer(async (req, res) => {
     try {
+      if (tryServeForwardModuleAsset(req, res)) return;
       // 构造完整的请求 URL
       const fullUrl = `http://${req.headers.host}${req.url}`;
 

@@ -2,7 +2,7 @@
 
 **模块名称：** Danmu Fusion（弹幕融合）  
 **模块 ID：** `tzb360.danmu.fusion`  
-**版本：** 1.0.0  
+**版本：** 1.2.2
 **作者：** tzb360（仅 `author` 字段）  
 **网站：** [https://github.com/tzb360/danmu_api](https://github.com/tzb360/danmu_api)
 
@@ -59,7 +59,13 @@ Danmu Fusion 是一个弹幕聚合播放模块，需要配套使用 Danmu API �
 ## 安装
 
 1. 部署 [Danmu API](https://github.com/tzb360/danmu_api)
-2. 在 Forward 中导入本模块：`danmu-fusion.js`
+2. 在 Forward 中导入本模块。VPS Node 部署可直接使用安装地址：
+
+```text
+http://你的服务器:9321/widgets/danmu-fusion/widget.fwd
+```
+
+也可手动导入 `danmu-fusion.js`。
 3. 配置 **Danmu API 地址**（只需一个 URL，Token 写在路径中）：
 
 ```text
@@ -99,7 +105,9 @@ http://你的服务器:9321/YOUR_TOKEN/api/forward/danmaku
 | 文件 | 说明 |
 |------|------|
 | `danmu-fusion.js` | Forward 导入的主模块 |
-| `danmu-fusion.fwd` | Widget 索引（可选） |
+| `widget.fwd` | Widget 安装索引 |
+| `danmu-fusion.fwd` | 兼容旧安装索引 |
+| `CHANGELOG.md` | 模块变更记录 |
 | `test-danmu-fusion.mjs` | 本地联调脚本 |
 
 ---

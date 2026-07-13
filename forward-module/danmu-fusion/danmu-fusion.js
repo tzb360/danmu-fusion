@@ -2,7 +2,7 @@
  * Danmu Fusion · 弹幕融合
  * Forward 专用弹幕聚合播放模块
  *
- * 版本：1.2.1
+ * 版本：1.2.2
  *
  * 架构（电影 / 电视剧完全分离）：
  *
@@ -19,7 +19,7 @@
 WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.2.1",
+  version: "1.2.2",
   requiredVersion: "0.0.2",
   description:
     "Danmu Fusion：按 unionId 分流 movie/tv。电影仅标题+年份；电视剧按季集动态请求，详情展开本季全集。",
