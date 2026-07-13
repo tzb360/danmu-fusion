@@ -60,3 +60,9 @@ test('episode cache panel preserves media type and never refreshes movies as S01
   assert.match(episodeAggregateJsContent, /最终采用/);
   assert.match(episodeAggregateJsContent, /原始匹配标题/);
 });
+
+test('Docker image includes the Forward module assets served by Node', async () => {
+  const fs = await import('node:fs');
+  const dockerfile = fs.readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
+  assert.match(dockerfile, /COPY forward-module\/ \.\/forward-module\//);
+});

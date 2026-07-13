@@ -13,6 +13,8 @@ RUN npm install
 # 复制所有源代码
 COPY danmu_api/ ./danmu_api/
 COPY config/ ./config_example/
+# Forward 模块安装索引与运行脚本由 Node 服务只读托管。
+COPY forward-module/ ./forward-module/
 
 # 暴露端口
 EXPOSE 9321
