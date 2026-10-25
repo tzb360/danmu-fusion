@@ -7,10 +7,10 @@ on:
   pull_request:
     branches:
       - main
-    if: github.repository == 'huangxd-/danmu_api'
 
 jobs:
   build:
+    if: github.repository == 'huangxd-/danmu_api'
     runs-on: ubuntu-latest
 
     steps:
