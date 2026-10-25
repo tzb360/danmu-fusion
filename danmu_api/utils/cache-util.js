@@ -4,6 +4,10 @@ import { Anime } from "../models/dandan-model.js";
 import { simpleHash } from "./codec-util.js";
 let fs, path;
 
+function cloneCacheValue(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
 // =====================
 // cache数据结构处理函数
 // =====================
@@ -12,7 +16,7 @@ let fs, path;
 const lastSearchMap = new Map();
 
 export function setLastSearch(ip, data) {
-    lastSearchMap.set(ip, { ...data, timestamp: Date.now() });
+    lastSearchMap.set(ip, { ...cloneCacheValue(data), timestamp: Date.now() });
     // 简单的清理逻辑：如果map太大，清理一半
     if (lastSearchMap.size > 200) {
         for (const [key, value] of lastSearchMap) {
@@ -24,7 +28,7 @@ export function setLastSearch(ip, data) {
 }
 
 export function getLastSearch(ip) {
-    return lastSearchMap.get(ip);
+    return cloneCacheValue(lastSearchMap.get(ip));
 }
 
 function getAnimeIdentityKey(anime) {
@@ -285,11 +289,11 @@ export function getSearchCache(keyword, detailsMap = null) {
 
         if (detailsMap instanceof Map && Array.isArray(cached.details)) {
             cached.details.forEach(anime => {
-                storeAnimeDetail(detailsMap, anime);
+                storeAnimeDetail(detailsMap, cloneCacheValue(anime));
             });
         }
 
-        return cached.results;
+        return cloneCacheValue(cached.results);
     }
     return null;
 }
@@ -302,8 +306,8 @@ export function setSearchCache(keyword, results, detailsMap = null) {
     sweepExpiredCache(globals.searchCache, globals.searchCacheMinutes, 'searchCache');
 
     globals.searchCache.set(keyword, {
-        results: results,
-        details: details,
+        results: cloneCacheValue(results),
+        details: cloneCacheValue(details),
         timestamp: Date.now()
     });
 
@@ -341,7 +345,7 @@ export function isCommentCacheValid(videoUrl) {
 export function getCommentCache(videoUrl) {
     if (isCommentCacheValid(videoUrl)) {
         log("info", `[Cache] Using comment cache for "${videoUrl}"`);
-        return globals.commentCache.get(videoUrl).comments;
+        return cloneCacheValue(globals.commentCache.get(videoUrl).comments);
     }
     return null;
 }
@@ -352,7 +356,7 @@ export function setCommentCache(videoUrl, comments) {
     sweepExpiredCache(globals.commentCache, globals.commentCacheMinutes, 'commentCache');
 
     globals.commentCache.set(videoUrl, {
-        comments: comments,
+        comments: cloneCacheValue(comments),
         timestamp: Date.now()
     });
 

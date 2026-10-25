@@ -8,10 +8,6 @@ import { searchBangumiData } from './bangumi-data-util.js';
 // TMDB API 工具方法
 // ---------------------
 
-// 全局任务队列，用于管理并发请求的合并与中断
-// Key: title, Value: { promise, controller, refCount }
-const TMDB_PENDING = new Map();
-
 // TMDB API 请求基础函数
 async function tmdbApiGet(url, options = {}) {
   const tmdbApi = "https://api.tmdb.org/3/";
@@ -204,7 +200,7 @@ async function getChineseTitleForResult(result, signal, queryTitle = "") {
   }
 }
 
-// 使用TMDB API 查询日语原名，支持请求合并与引用计数控制
+// 使用 TMDB API 查询日语原名。每次调用持有独立控制器，禁止跨请求共享 Promise/中断状态。
 export async function getTmdbJaOriginalTitle(title, signal = null, sourceLabel = 'Unknown') {
   // 优化搜索关键词: 剥离 "Season 2", "第二季" 等后缀
   const cleanTitle = cleanSearchQuery(title);
@@ -230,10 +226,8 @@ export async function getTmdbJaOriginalTitle(title, signal = null, sourceLabel =
     return null;
   }
 
-  // 检查是否已有相同关键词的搜索任务正在进行
-  let task = TMDB_PENDING.get(cleanTitle);
-
-  if (!task) {
+  let task;
+  {
     // 创建一个新的控制器，用于控制真正的后台网络请求
     const masterController = new AbortController();
 
@@ -497,16 +491,9 @@ export async function getTmdbJaOriginalTitle(title, signal = null, sourceLabel =
     task = {
       controller: masterController,
       refCount: 0,
-      promise: executeSearch().finally(() => {
-        // 无论成功失败，移除 Map 记录
-        TMDB_PENDING.delete(cleanTitle);
-      })
+      promise: executeSearch()
     };
-
-    TMDB_PENDING.set(cleanTitle, task);
     log("info", `[Utils] [TMDB] 启动新搜索任务: ${cleanTitle}`);
-  } else {
-    log("info", `[Utils] [TMDB] 加入正在进行的搜索: ${cleanTitle} (${sourceLabel})`);
   }
 
   // 增加引用计数
@@ -514,14 +501,10 @@ export async function getTmdbJaOriginalTitle(title, signal = null, sourceLabel =
 
   // 定义退出任务及释放计数的处理函数
   const leaveTask = () => {
-    // 再次获取任务确认其仍存在
-    const currentTask = TMDB_PENDING.get(cleanTitle);
-    if (currentTask === task) {
-        task.refCount--;
-        if (task.refCount <= 0) {
-            log("info", `[Utils] [TMDB] 所有调用者已取消，终止后台请求: ${cleanTitle}`);
-            task.controller.abort();
-        }
+    task.refCount--;
+    if (task.refCount <= 0) {
+      log("info", `[Utils] [TMDB] 调用者已取消，终止本次请求: ${cleanTitle}`);
+      task.controller.abort();
     }
   };
 
