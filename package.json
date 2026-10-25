@@ -17,7 +17,9 @@
     "test:forward-native": "node --test forward-module/danmu-fusion/forward-baseline.test.mjs",
     "test:forward-match-live": "node forward-module/danmu-fusion/test-match-live.mjs",
     "test:forward-native-merge": "node forward-module/danmu-fusion/test-native-merge.mjs",
-    "test:forward-reference-live": "node forward-module/danmu-fusion/test-reference-live.mjs"
+    "test:forward-reference-live": "node forward-module/danmu-fusion/test-reference-live.mjs",
+    "test:forward-multi": "node --test forward-module/danmu-fusion/multi-api.test.mjs",
+    "test:forward-multi-live": "node forward-module/danmu-fusion/test-multi-live.mjs"
   },
   "author": "",
   "license": "AGPL-3.0-only",

@@ -1,72 +1,55 @@
 # Danmu Fusion · 弹幕融合
 
-[![Version](https://img.shields.io/badge/version-1.4.5-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.4.5)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.0)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](./LICENSE)
 
-为 Forward 兼容播放器提供的开源弹幕模块。填写一个弹幕 API 地址，即可搜索作品、选择真实分集并加载弹幕；兼容支持弹弹 Play 协议的服务，优先使用服务端原生多源聚合。
+为 Rex / Forward 兼容播放器提供的开源弹幕接入模块，支持同时配置 **1～3 个弹弹 Play 兼容 API**，完成搜索、选集和弹幕加载。
 
-**Danmu Fusion 是播放器弹幕接入模块，不是 danmu_api 服务端。** 模块需要连接另行部署的兼容 API。仓库公开可导入成品、维护源码、构建脚本和测试，并保留历史上基于 [danmu_api](https://github.com/huangxd-/danmu_api) 的后端源码与许可。
+**Danmu Fusion 是播放器模块，不是 danmu_api 服务端。** 模块需要连接另行部署的兼容 API，不附带公共接口、账号或密钥。仓库公开完整维护源码、独立构建脚本和测试，并保留基于 [danmu_api](https://github.com/huangxd-/danmu_api) 的历史后端源码与许可。
 
-## 安装
+## 在线安装
 
-复制下面的 Raw 直链，在 Rex / Forward 的 Widget / 模块管理中选择通过 URL 导入，粘贴后确认：
+复制下面的 Raw 直链，在播放器的模块管理中选择「通过链接添加」或「通过 URL 导入」，粘贴后确认：
 
 ```text
 https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-fusion/danmu-fusion.js
 ```
 
-也可以使用以下安装文件：
+- [安装索引 widget.fwd](https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-fusion/widget.fwd)
+- [1.5.0 固定版本直链](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.5.0/forward-module/danmu-fusion/danmu-fusion.js)
+- [发布页与完整源码包](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.0)
 
-| 文件 | 1.4.5 固定版本 |
-| --- | --- |
-| 安装索引 | [widget.fwd](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.4.5/forward-module/danmu-fusion/widget.fwd) |
-| 完整模块 | [danmu-fusion.js](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.4.5/forward-module/danmu-fusion/danmu-fusion.js) |
-| 下载与源码 | [GitHub Release](https://github.com/tzb360/danmu-fusion/releases/tag/v1.4.5) |
-
-1. 导入模块。
-2. 在模块设置中填写「弹幕 API 地址」。
-3. 保存后搜索作品，选择对应资源和分集。
-
-模块不附带公共 API、账号或密钥。请使用自建或已获授权的兼容服务。
+安装后填写「弹幕 API 1（主要接口）」。需要时再填写 API 2、API 3；每框一个地址，可留空，不要用换行输入多个地址。
 
 ```text
-https://example.com
 https://example.com/your-token
-https://example.com/api/v2
-https://example.com/your-token/api/v2/
+https://example.com/proxy/your-token/api/v2/
+https://example.com/proxy/api/v2?token=your%2Fencoded%2Btoken
 ```
 
-以上地址会自动规范化，保留 Token 和反向代理路径。旧版 `…/api/forward/danmaku` 地址也支持迁移。
+模块 ID 保持 `tzb360.danmu.fusion`。API 1 沿用 `danmu_api_url`，API 2/3 分别使用 `danmu_api_url_2`、`danmu_api_url_3`。从旧版升级时原 API 1 配置继续有效。
 
-模块 ID 为 `tzb360.danmu.fusion`，升级保留原 `danmu_api_url` 配置。**1.4.5 仅支持一个 API 地址，不支持换行填写多个地址。** 同一 API 内的多平台聚合由服务端完成。
+## 1.5.0 功能
 
-## 功能
+- **多 API 独立选源**：最多三个接口独立规范化、去重和并发搜索。单个接口失败不清空健康来源的结果。
+- **优先展示有效结果**：首次搜索不等待仍在冷查询的慢接口；稍后完成的数据可在后续搜索中补充。播放器自身的列表缓存可能影响刷新。
+- **可靠来源绑定**：选择 ID 绑定来源指纹与真实协议 ID，防止不同接口的相同编号串线；支持来源重排、新运行时和仅传 commentId 的播放请求。
+- **保守匹配**：核对电影或剧集的片名、年份、类型和季集，保留标准 match 年份辅助复核及失败回退。
+- **有依据的安全聚合**：同作品选源入口保留每个来源。只有同版本、同季集、相同明确片长及相同内容指纹或官方视频资源证据时，才提供跨 API 聚合选项。
+- **保留原生效果**：继续使用服务端 `withRelated=true` 聚合，保留时间、颜色、滚动、顶部和底部样式，不重复施加偏移。
+- **单文件导入**：完整 JS 可独立运行，运行时无需其他源码文件、Node.js 或浏览器计时器。
 
-- **标准接口兼容**：搜索、详情和评论使用真实资源 ID；缺少扩展接口时保留基本播放流程。
-- **电影与剧集分开匹配**：核对片名、年份、类型和季集，排除明确冲突及解说、预告等衍生资源。
-- **年份辅助复核**：同名不同年份的候选可通过标准 `POST /api/v2/match` 辅助消歧；接口不可用时退回搜索结果。
-- **服务端原生聚合**：接收服务端已合并的弹幕，不把候选来源数当作实际取得的来源数。
-- **保留弹幕样式与时间**：保留颜色、滚动、顶部、底部及原始时间轴，不重复应用服务端偏移。
-- **进度与缓存**：支持官方 GET 分片；标准整集响应支持续播和进度筛选，采用有界短期缓存。
-- **独立导入文件**：运行时使用 Widget HTTP / Storage，无需 Node.js、浏览器计时器或额外依赖。
+所有接口都缺少片长或视频指纹时，仍可独立搜索、选集和播放，不会盲目拼接不同服务器的弹幕。只有真实取得的评论来源才计为成功来源。
 
-## 更新模块
+## 更新与兼容
 
-通过相同 Raw 地址重新导入，或使用播放器提供的模块更新功能。模块 ID 保持不变，原 API 地址无需重填。主分支链接会随正式版本更新，使用前可查看 [更新记录](./forward-module/danmu-fusion/CHANGELOG.md)。
+通过相同 Raw 地址更新即可。主分支直链始终提供当前正式版本；需要固定版本时使用带版本标签的直链。
 
-## 1.4.5 更新
+仅配置 API 1 时继续使用原来的真实 ID。启用多个 API 后，旧版未绑定来源的选择需要重新搜索；修改或删除地址、Token 后，失效的历史选择也会要求重新选择，不猜测新的来源。
 
-新增基于文件名的年份辅助匹配，复核实际片名、年份、类型和资源 ID；后续季缺少可靠年份时跳过额外请求。修复数字电影名的年份识别边界，例如《2001太空漫游》(1968)。完整记录见 [CHANGELOG](./forward-module/danmu-fusion/CHANGELOG.md)。
+缓存保持有界，较大的合法轨道跳过缓存。整轨上限为 50 万条、6400 万字符 JSON；跨 API 聚合超过容量时保留一条完整健康来源，其余来源仍能独立选择。进度与分片沿用标准协议，不截断伪装完整轨道。
 
-## 使用说明
-
-多源效果取决于服务端启用的来源、上游可用性和匹配结果。使用普通单来源服务时，模块仍按标准流程工作。不同剪辑版本需要可靠的时间轴依据，模块不进行盲目自动校准。
-
-标准评论首次返回完整轨道；仅在服务返回官方 `barrage_list` 时加载对应 GET 分片。去重只移除 `cid`、`p`、`m` 完全相同的重放记录，保留独立观众的相同发言。
-
-部分冷搜索可能超出播放器的等待时限；原版 Forward、iOS 和所有平台的设备兼容性尚未逐项验收。可复现检查和验证范围见 [兼容性说明](./DANMU_FUSION_COMPATIBILITY_AUDIT.md)。
-
-更多协议、缓存和地址迁移说明见 [模块文档](./forward-module/danmu-fusion/README.md)。自建服务端的严格来源匹配见 [原生聚合配置](./forward-module/danmu-fusion/SERVER_NATIVE_MERGE.md)，后端接口与部署参考见 [服务端文档](./README-upstream.md) 和 [DEPLOYMENT](./DEPLOYMENT.md)。
+原生请求的硬性超时由播放器宿主提供。冷搜索延迟、播放器缓存、Forward 原版和 iOS 等环境仍需对应设备验收。功能边界见 [模块文档](./forward-module/danmu-fusion/README.md)，更新记录见 [CHANGELOG](./forward-module/danmu-fusion/CHANGELOG.md)。
 
 ## 开发
 
@@ -75,44 +58,41 @@ https://example.com/your-token/api/v2/
 ```sh
 git clone https://github.com/tzb360/danmu-fusion.git
 cd danmu-fusion
-git checkout v1.4.5
+git checkout v1.5.0
 npm ci
 npm run build:forward-fusion
 node scripts/build-danmu-fusion.mjs --check
 npm run test:all
 ```
 
-`--check` 验证维护源码与可导入文件一致，不改写产物。旧的 `build-forward-widget` 用于另一套后端打包入口，不是本模块的构建命令。
+`--check` 检查维护源码与单文件产物一致，不改写产物。
 
 | 路径 | 内容 |
 | --- | --- |
-| `forward-module/danmu-fusion/danmu-fusion.js` | 可直接导入的完整模块，含身份解析入口及生成区块 |
-| `forward-module/danmu-fusion/adapter.js` | 公开协议适配、搜索、年份复核、详情和评论 |
+| `forward-module/danmu-fusion/danmu-fusion.js` | 可导入成品，含身份解析入口及生成区块 |
+| `forward-module/danmu-fusion/adapter.js` | 标准协议、搜索、年份复核、详情和评论 |
+| `forward-module/danmu-fusion/multi-api.js` | 多 API 管理、来源路由及安全聚合 |
 | `forward-module/danmu-fusion/transport.js` | 保留引擎的 HTTP、缓存和分片逻辑 |
 | `danmu_api/aggregation/forward-core.js` | 身份匹配和去重核心 |
 | `danmu_api/utils/zh-util.js` | 上游中文简繁转换工具 |
-| `scripts/build-danmu-fusion.mjs` | 独立模块构建与一致性检查 |
-| `forward-module/danmu-fusion/*.test.mjs` | 模块自动化测试 |
-| `danmu_api/` | 服务端源码及测试 |
+| `scripts/build-danmu-fusion.mjs` | 独立构建及一致性检查 |
+| `forward-module/danmu-fusion/*.test.mjs` | 模块测试，含 34 项多 API 回归 |
+| `forward-module/danmu-fusion/fixtures/` | 基准实验使用的 1.4.5 公开构建 |
 
-可选真实 API 检查使用 `DANMU_API_URL` 环境变量，测试脚本不会输出该地址：
+可单独执行 `npm run test:forward-native`、`npm run test:forward-multi`。性能比较脚本为 `node forward-module/danmu-fusion/benchmark-multi.mjs`，使用 Mock 延迟，不代表公网或设备性能。
 
-```sh
-npm run test:forward-live
-npm run test:forward-match-live
-npm run test:forward-native-merge
-```
+真实接口测试使用 `DANMU_API_URL`、`DANMU_API_URL_2`、`DANMU_API_URL_3` 环境变量，再运行 `npm run test:forward-multi-live`。不要将实际地址、Token、Cookie 或个人播放记录提交到仓库。第三方参考模块不随项目分发，可通过 `DANMU_REFERENCE_REX`、`DANMU_REFERENCE_MAKKA`、`DANMU_REFERENCE_UNIVERSAL` 指定本地文件作可选对照。
 
-请勿将实际 Token、Cookie、配置文件或个人播放记录提交到仓库。第三方参考模块不随项目分发；可通过 `DANMU_REFERENCE_REX`、`DANMU_REFERENCE_MAKKA`、`DANMU_REFERENCE_UNIVERSAL` 指定本地文件进行可选对照。
+验证范围与复现方式见 [1.5.0 测试说明](./forward-module/danmu-fusion/MULTI_API_TEST_REPORT_1.5.0.md)。后端历史接口与自建部署见 [服务端参考](./README-upstream.md)、[DEPLOYMENT](./DEPLOYMENT.md) 和 [严格原生聚合配置](./forward-module/danmu-fusion/SERVER_NATIVE_MERGE.md)。
 
 ## 反馈与贡献
 
-欢迎通过 [Issues](https://github.com/tzb360/danmu-fusion/issues) 提交问题，或通过 Pull Request 改进实现。报告问题时请提供模块版本、播放器及系统版本、作品类型与季集、预期行为和脱敏后的诊断代码。不要附带私人 API 地址或凭据。
+欢迎通过 [Issues](https://github.com/tzb360/danmu-fusion/issues) 或 Pull Request 反馈问题与改进。请提供模块版本、播放器和系统版本、作品类型与季集、预期行为及脱敏诊断，不要附带私人接口或凭据。
 
-修改适配层或核心后请重新构建，并运行完整测试。新增来源匹配规则应包含同名翻拍、跨季、特别篇及失败回退的测试。
+修改维护源码后请重新构建并运行完整测试。来源匹配和聚合规则应包含错误年份、跨季、不同剪辑、接口失败及历史选择路由的回归。
 
 ## 许可与致谢
 
-项目以 **AGPL-3.0-only** 开源，许可全文见 [LICENSE](./LICENSE)。本仓库基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api) 开发，保留上游许可与署名；不以 MIT 重新许可上游代码。
+项目以 **AGPL-3.0-only** 开源，许可全文见 [LICENSE](./LICENSE)。本仓库基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api) 增量开发，保留上游许可与署名。
 
-Danmu Fusion 由 [tzb360](https://github.com/tzb360) 维护。感谢 [danmu_api](https://github.com/huangxd-/danmu_api)、[ForwardWidgets](https://github.com/InchStudio/ForwardWidgets) 和 [弹弹play](https://www.dandanplay.com/) 的开源实现、协议与文档。第三方名称不表示官方合作或背书。
+由 [tzb360](https://github.com/tzb360) 维护。感谢 [danmu_api](https://github.com/huangxd-/danmu_api)、[ForwardWidgets](https://github.com/InchStudio/ForwardWidgets) 和 [弹弹play](https://www.dandanplay.com/) 的开源实现、协议与文档。

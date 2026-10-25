@@ -1,3 +1,5 @@
+[Current 1.5.0 validation](./forward-module/danmu-fusion/MULTI_API_TEST_REPORT_1.5.0.md)
+
 # Danmu Fusion 1.4.5 兼容性与验证
 
 ## 可复现检查

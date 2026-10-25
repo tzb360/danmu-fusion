@@ -11,6 +11,7 @@ const compatResponses=new Map();
 const compatPending=new Map();
 const compatYearMatches=new Map();
 const compatMatchUnsupported=new Set();
+let compatStorageQueue=Promise.resolve();
 
 function compatLog(stage,code,message) {
   const event={stage:stage,code:code,message:message};
@@ -35,18 +36,20 @@ function compatConfig(params){
 }
 function compatPresent(id){return id!==undefined && id!==null && String(id).trim()!=='';}
 function compatLegacyId(id){return /^(?:fusion-auto:|fusion-track:|tmdb_|fusion_(?:tv|movie)_)/i.test(String(id)) || Number(id)<=-1000000000 && Number(id)>-2000000000;}
-function compatKey(cfg,id){return JSON.stringify([cfg.requestBase,String(id)]);}
+function compatKey(cfg,id){return fusionDigest(JSON.stringify([cfg.requestBase,cfg.query || '',String(id)]));}
 function compatPlaybackKey(cfg,params,id){return compatKey(cfg,[id,params.tmdbId,params.type,params.seriesName,params.title,params.season,params.episode].join('|'));}
 
 async function compatHttp(cfg,path,stage,body){
-  const key=JSON.stringify([cfg.requestBase,path,body || null]);
+  const key=fusionDigest(JSON.stringify([cfg.requestBase,cfg.query || '',path,body || null]));
   if(compatPending.has(key))return JSON.parse(JSON.stringify(await compatPending.get(key)));
+  if(compatPending.size>=12)throw compatError(stage,'BUSY','Native request capacity reached; retry later');
   const task=(async()=>{
     compatLog(stage,'REQUEST','Request started');
     if(typeof Widget==='undefined' || !Widget.http || typeof Widget.http.get!=='function')throw compatError('Init','HTTP_UNAVAILABLE','Widget.http.get unavailable');
     let response;
     try{
-      const url=/^https?:\/\//i.test(path)?path:cfg.requestBase+path;
+      const external=/^https?:\/\//i.test(path);
+      const url=external?path:cfg.requestBase+path+(cfg.query?(path.includes('?')?'&':'?')+cfg.query:'');
       if(body){
         if(typeof Widget.http.request==='function')response=await Widget.http.request({url:url,method:'POST',data:body,headers:headers()});
         else if(typeof Widget.http.post==='function')response=await Widget.http.post(url,body,{headers:headers()});
@@ -86,6 +89,7 @@ async function compatRemember(cfg,candidate){
   // Only lightweight lookup metadata is persisted, always as JSON strings.
   // Full comments are memory-only; storage failure never blocks playback.
   const storeKey='fusion-compat-v1:lookup:'+key;
+  const write=compatStorageQueue.then(async()=>{
   try{
     const value=JSON.stringify(record);if(value.length>200000)return;
     await Widget.storage.set(storeKey,value);
@@ -96,6 +100,7 @@ async function compatRemember(cfg,candidate){
     while(list.length>32){const old=list.shift();if(Widget.storage.remove)await Widget.storage.remove(old);}
     await Widget.storage.set(indexKey,JSON.stringify(list));
   }catch(e){compatLog('Cache','STORAGE_UNAVAILABLE','Optional lookup storage unavailable');}
+  });compatStorageQueue=write.catch(()=>{});await write;
 }
 async function compatRecall(cfg,id){
   const key=compatKey(cfg,id);let record=compatLookups.get(key);
@@ -170,7 +175,7 @@ function compatYearMatchPlan(params,raw){
   return {identity:identity,year:String(year),fileName:title+'.'+year+(identity.isMovie?'':'.S'+String(identity.season).padStart(2,'0')+'E'+String(identity.episode).padStart(2,'0'))};
 }
 async function compatVerifyYear(cfg,params,raw,candidates){
-  if(compatStage<2 || !candidates.length || compatMatchUnsupported.has(cfg.requestBase))return candidates;
+  if(compatStage<2 || !candidates.length || compatMatchUnsupported.has(compatKey(cfg,'match')))return candidates;
   const plan=compatYearMatchPlan(params,raw);
   if(!plan || !Widget.http || typeof Widget.http.request!=='function' && typeof Widget.http.post!=='function')return candidates;
   const key=compatKey(cfg,plan.fileName);let data,saved=compatYearMatches.get(key);
@@ -203,7 +208,8 @@ async function compatVerifyYear(cfg,params,raw,candidates){
     // Keep a reliable native multi-source resource ahead of a single source.
     return candidates.map((c,index)=>({c:c,index:index,score:(Array.isArray(c.mergedChildren)&&c.mergedChildren.length?2:0)+(confirmed.has(String(c.animeId))?1:0)})).sort((a,b)=>b.score-a.score || a.index-b.index).map(v=>v.c);
   }catch(e){
-    if([401,403,404,405,501].includes(e.status))compatMatchUnsupported.add(cfg.requestBase);
+    if([401,403,404,405,501].includes(e.status))compatMatchUnsupported.add(compatKey(cfg,'match'));
+    while(compatMatchUnsupported.size>16)compatMatchUnsupported.delete(compatMatchUnsupported.values().next().value);
     compatFailure('Match',e);compatLog('Match','FALLBACK','Optional year match unavailable; keeping standard search results');return candidates;
   }
 }
@@ -321,7 +327,7 @@ async function fusionCompatComments(params,progress){
       const segment=data.barrage_list.find(s=>s && time>=Number(s.segment_start) && time<Number(s.segment_end));
       if(!segment){compatLog('Segment','EMPTY','No segment at requested time');return {comments:[],count:0};}
       if(!/^https?:\/\//i.test(String(segment.segment_url || '')))throw compatError('Segment','INVALID_URL','Invalid segment URL');
-      const segmentKey=key+':segment:'+JSON.stringify(segment);
+      const segmentKey=key+':segment:'+fusionDigest(JSON.stringify(segment));
       let fragment=compatRead(segmentKey);
       if(!fragment){fragment=await compatHttp(cfg,segment.segment_url,'Segment');if(Array.isArray(fragment))fragment={comments:fragment};fragment=compatCommentsResult(fragment,false,params);compatSave(segmentKey,fragment);}
       data=fragment;

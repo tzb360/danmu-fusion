@@ -19,13 +19,13 @@ function standardApi(options={}) {
   };
 }
 
-test('settings expose exactly one API address, including all module-level params',()=>{
+test('settings expose exactly three API addresses, including all module-level params',()=>{
   const app=runtime(standardApi()), meta=app.WidgetMetadata;
   assert.equal(meta.id,'tzb360.danmu.fusion');
-  assert.equal(meta.version,'1.4.5');
-  assert.equal(meta.globalParams.length,1);
+  assert.equal(meta.version,'1.5.0');
+  assert.equal(meta.globalParams.length,3);
   assert.equal(meta.globalParams[0].name,'danmu_api_url');
-  assert.equal(meta.globalParams[0].title,'弹幕 API 地址');
+  assert.equal(meta.globalParams[0].title,'弹幕 API 1（主要接口）');
   assert.equal(meta.globalParams[0].type,'input');
   assert.ok(meta.modules.every(m=>m.params.length===0));
 });
