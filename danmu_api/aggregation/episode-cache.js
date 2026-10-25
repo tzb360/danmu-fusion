@@ -21,6 +21,10 @@ let fsModule = null;
 let pathModule = null;
 let cacheDirResolved = null;
 
+function cloneEntry(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
 function canUseFs() {
   try {
     return typeof process !== 'undefined' && Boolean(process.versions?.node);
@@ -87,12 +91,12 @@ function filePathForKey(dir, key) {
  * @returns {object|null}
  */
 export function getEpisodeCacheMemory(key) {
-  return memoryIndex.get(key) || null;
+  return cloneEntry(memoryIndex.get(key) || null);
 }
 
 export function setEpisodeCacheMemory(entry) {
   if (!entry?.key) return;
-  memoryIndex.set(entry.key, entry);
+  memoryIndex.set(entry.key, cloneEntry(entry));
   // 简单上限
   if (memoryIndex.size > 300) {
     const first = memoryIndex.keys().next().value;
@@ -135,7 +139,7 @@ export async function loadEpisodeCache(key) {
       return null;
     }
     setEpisodeCacheMemory(parsed);
-    return parsed;
+    return cloneEntry(parsed);
   } catch (error) {
     log('warn', `[EpisodeCache] load failed ${key}: ${error.message}`);
   }
@@ -243,11 +247,14 @@ export async function listEpisodeCaches() {
 }
 
 function summarizeEntry(entry) {
-  const sources = entry.sources || entry.sources_detail || [];
+  const sources = entry.sources || entry.sources_detail || entry.sources_summary || [];
   return {
     key: entry.key,
     identity: entry.identity || null,
     display: entry.display || entry.identity?.display || null,
+    type: entry.identity?.is_movie === true || entry.identity?.type === 'movie'
+      ? 'movie'
+      : (entry.identity?.type || null),
     source_count: Array.isArray(sources) ? sources.length : 0,
     total_before: entry.stats?.total_before ?? null,
     total_after: entry.stats?.total_after ?? entry.comments?.length ?? null,
@@ -255,12 +262,16 @@ function summarizeEntry(entry) {
     updated_at: entry.updated_at || entry.created_at || null,
     cached: true,
     has_comments: Array.isArray(entry.comments) && entry.comments.length > 0,
+    // web 面板列表预览：每个来源的原始文件名 + provider + 数量
     sources_summary: Array.isArray(sources)
       ? sources.map((s) => ({
-          source: s.source,
+          source: s.source || s.provider || 'unknown',
+          provider: s.provider || s.source || 'unknown',
           file_name: s.file_name || s.fileName || s.raw_file || null,
           matched_title: s.matched_title || s.anime_title || null,
-          count_raw: s.count_raw ?? s.count ?? null
+          count_raw: s.count_raw ?? s.count ?? null,
+          count_used: s.count_used ?? null,
+          status: s.status || null
         }))
       : []
   };
@@ -269,12 +280,41 @@ function summarizeEntry(entry) {
 export async function getEpisodeCacheDetail(key) {
   const entry = await loadEpisodeCache(key);
   if (!entry) return null;
+  const sources = entry.sources || entry.sources_detail || [];
+  // 详情：完整来源 metadata（文件名 / provider / 数量 / 聚合关系）
+  const sources_detail = sources.map((s) => ({
+    source: s.source || s.provider || 'unknown',
+    provider: s.provider || s.source || 'unknown',
+    file_name: s.file_name || s.fileName || s.raw_file || null,
+    fileName: s.file_name || s.fileName || s.raw_file || null,
+    raw_file: s.raw_file || s.file_name || s.fileName || null,
+    matched_title: s.matched_title || s.anime_title || null,
+    anime_title: s.anime_title || s.matched_title || null,
+    episode_title: s.episode_title || null,
+    original_title: s.original_title || null,
+    region: s.region || null,
+    region_label: s.region_label || null,
+    year: s.year || null,
+    season: s.season ?? null,
+    episode: s.episode ?? null,
+    type: s.type || entry.identity?.type || null,
+    count_raw: s.count_raw ?? s.count ?? 0,
+    count_sampled: s.count_sampled ?? null,
+    count_used: s.count_used ?? s.count_sampled ?? s.count_raw ?? 0,
+    match_reason: s.match_reason || null,
+    status: s.status || null,
+    error: s.error || null,
+    url: s.url || null,
+    weight: s.weight ?? null
+  }));
   return {
     ...summarizeEntry(entry),
-    sources: entry.sources || [],
-    sources_detail: entry.sources_detail || entry.sources || [],
+    sources: sources_detail,
+    sources_detail,
     media: entry.media || null,
     stats: entry.stats || {},
+    providerStats: entry.providerStats || null,
+    danmuStats: entry.danmuStats || null,
     removed_by_reason: entry.stats?.removed_by_reason || {},
     sample_comments: (entry.comments || []).slice(0, 10)
   };

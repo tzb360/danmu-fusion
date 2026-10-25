@@ -1,4 +1,5 @@
 import { simplized } from '../utils/zh-util.js';
+import { EPISODE_CACHE_VERSION } from './source-guard.js';
 
 /**
  * 剧集身份与缓存键
@@ -85,7 +86,10 @@ export function extractYearValue(v) {
 
 /**
  * 构造可落盘文件名风格的「原始弹幕文件」展示名
- * 例：Shameless.US.2011.S04E10.xml
+ * 电视剧例：Shameless.US.2011.S04E10.xml
+ * 电影例：Casino.Royale.2006.xml（禁止假 S01E01）
+ *
+ * 规则：仅当 season>0 且 episode>0 时附加 SxxExx；电影/无季集不附加。
  */
 export function buildSourceFileLabel({
   source,
@@ -95,34 +99,93 @@ export function buildSourceFileLabel({
   year,
   season,
   episode,
-  url
+  url,
+  type,
+  is_movie
 } = {}) {
-  const se = `S${String(season || 1).padStart(2, '0')}E${String(episode || 1).padStart(2, '0')}`;
+  const movie =
+    is_movie === true ||
+    String(type || '').toLowerCase() === 'movie' ||
+    String(type || '').toLowerCase() === 'movies';
+  const sNum = Number(season);
+  const eNum = Number(episode);
+  const hasSE =
+    !movie && Number.isFinite(sNum) && sNum > 0 && Number.isFinite(eNum) && eNum > 0;
+
   const base =
     (original_title && String(original_title).trim()) ||
     (title && String(title).trim()) ||
-    'episode';
+    (movie ? 'movie' : 'episode');
   const safeBase = String(base)
     .replace(/[^\w\u4e00-\u9fa5.\-]+/g, '.')
     .replace(/\.+/g, '.')
     .replace(/^\.|\.$/g, '')
-    .slice(0, 80) || 'episode';
+    .slice(0, 80) || (movie ? 'movie' : 'episode');
   const reg = normalizeRegion(region);
   const y = extractYearValue(year);
   const parts = [safeBase];
   if (reg) parts.push(reg.toUpperCase());
   if (y) parts.push(y);
-  parts.push(se);
-  let name = parts.join('.') + '.xml';
-  // 若有真实 url 短 id 可附带
-  if (url && String(url).length < 40 && !String(url).includes('://')) {
-    name = `${parts.join('.')}.${String(url).replace(/[^\w.-]/g, '_')}.xml`;
+  if (hasSE) {
+    parts.push(
+      `S${String(sNum).padStart(2, '0')}E${String(eNum).padStart(2, '0')}`
+    );
   }
+  const provider = String(source || 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_') || 'unknown';
+  parts.push(provider);
+  // 尽可能保留平台原始资源标识，避免同一媒体的多个实际弹幕文件同名。
+  let resourceId = null;
+  if (url) {
+    const raw = String(url);
+    if (raw.length < 80 && !raw.includes('://')) {
+      resourceId = raw;
+    } else {
+      const queryId = raw.match(/[?&](?:vid|tvid|cid|aid|id)=([^&#]+)/i)?.[1];
+      const pathId = raw.split(/[?#]/)[0].split('/').filter(Boolean).pop();
+      resourceId = queryId || pathId || null;
+    }
+  }
+  if (resourceId) {
+    let decodedId = String(resourceId);
+    try { decodedId = decodeURIComponent(decodedId); } catch { /* keep raw id */ }
+    const safeId = decodedId
+      .replace(/[^\w.-]+/g, '_')
+      .slice(0, 64);
+    if (safeId) parts.push(safeId);
+  }
+  let name = parts.join('.') + '.xml';
   return name;
 }
 
 /**
+ * 版本后缀：缓存必须绑定 version，禁止 title/tmdb 固定唯一结果后跨版串弹幕。
+ * 优先 version_key（如 us:2011:s4），否则 region+year。
+ */
+export function buildVersionSuffix(identity = {}, region = null, year = null) {
+  const vk = identity.version_key || identity.versionKey || null;
+  if (vk != null && String(vk).trim() !== '') {
+    const safe = String(vk)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9:._-]+/g, '_')
+      .slice(0, 64);
+    return `:v${safe}`;
+  }
+  const regPart = normalizeRegion(region) || null;
+  const yearPart = extractYearValue(year) || null;
+  if (regPart || yearPart) {
+    return `:r${regPart || 'unk'}:y${yearPart || '0000'}`;
+  }
+  return '';
+}
+
+/**
  * @param {object} identity
+ * 缓存键绑定：id + season + episode + version
+ * - 电影：可无 version 后缀（唯一匹配）
+ * - 电视剧：有 region/year/version_key 时必须写入，防止美/英同集串缓存
  */
 export function buildEpisodeIdentity(identity = {}) {
   const { season, episode } = normalizeSeasonEpisode(identity.season, identity.episode);
@@ -146,37 +209,81 @@ export function buildEpisodeIdentity(identity = {}) {
   }
   const region_label = identity.region_label || regionLabel(region);
   const year = extractYearValue(identity.year || identity.series_year || identity.seriesYear);
+  const version_key =
+    identity.version_key != null && String(identity.version_key).trim() !== ''
+      ? String(identity.version_key).trim()
+      : null;
+  const verSuffix = buildVersionSuffix(
+    { version_key },
+    region,
+    year
+  );
+
+  // 电影：缓存键不绑 season/episode（0/0 与 S1E1 均非法用于电影）
+  const typeHint = String(
+    identity.type || identity.media_type || identity.mediaType || ''
+  ).toLowerCase();
+  const isMovie =
+    identity.is_movie === true ||
+    identity.isMovie === true ||
+    typeHint === 'movie' ||
+    typeHint === 'movies' ||
+    typeHint === 'film';
 
   let key;
-  if (tmdbId) {
-    // TMDB 已区分版本，仍写入 s/e
-    key = `tmdb:${tmdbId}:s${season}:e${episode}`;
+  const schemaPrefix = `cv${EPISODE_CACHE_VERSION}:`;
+  if (isMovie) {
+    if (tmdbId) {
+      key = `${schemaPrefix}tmdb:${tmdbId}:movie:y${year || '0000'}`;
+    } else if (imdbId) {
+      key = `${schemaPrefix}imdb:${imdbId}:movie:y${year || '0000'}`;
+    } else if (titleKey) {
+      key = `${schemaPrefix}title:${titleKey}:movie:y${year || '0000'}`;
+    } else if (episodeId) {
+      key = `${schemaPrefix}epid:${episodeId}:movie`;
+    } else {
+      throw new TypeError('movie identity requires title, tmdb_id, or imdb_id');
+    }
+  } else if (tmdbId) {
+    // 电视剧：tmdb + s/e + version
+    key = `${schemaPrefix}tmdb:${tmdbId}:tv:s${season}:e${episode}${verSuffix}`;
   } else if (imdbId) {
-    key = `imdb:${imdbId}:s${season}:e${episode}`;
+    key = `${schemaPrefix}imdb:${imdbId}:tv:s${season}:e${episode}${verSuffix}`;
   } else if (titleKey) {
-    // 必须含 region + year，防止美/英同名同季同集串缓存
     const regPart = region || 'unk';
     const yearPart = year || '0000';
-    key = `title:${titleKey}:r${regPart}:y${yearPart}:s${season}:e${episode}`;
+    if (version_key) {
+      key = `${schemaPrefix}title:${titleKey}:tv:s${season}:e${episode}${verSuffix}`;
+    } else {
+      key = `${schemaPrefix}title:${titleKey}:tv:r${regPart}:y${yearPart}:s${season}:e${episode}`;
+    }
   } else if (episodeId) {
-    key = `epid:${episodeId}`;
+    key = `${schemaPrefix}epid:${episodeId}:tv:s${season}:e${episode}`;
   } else {
     throw new TypeError('identity requires title, tmdb_id, imdb_id, or episode_id');
   }
 
+  // A processing profile separates Forward's conservative rules, offsets and
+  // source selection from historical filtered caches without deleting them.
+  const processing_profile = identity.processing_profile || null;
+  if (processing_profile) key += `:p${String(processing_profile).replace(/[^a-z0-9_-]/gi, '_')}`;
   return {
     key,
+    processing_profile,
     title: title || titleKey || '',
     original_title: originalTitle || null,
     title_key: titleKey,
     region: region || null,
     region_label: region_label || null,
     year: year || null,
+    version_key: isMovie ? null : version_key || null,
     tmdb_id: tmdbId,
     imdb_id: imdbId,
-    season,
-    episode,
-    episode_id: episodeId
+    season: isMovie ? null : season,
+    episode: isMovie ? null : episode,
+    episode_id: episodeId,
+    type: isMovie ? 'movie' : (typeHint || 'tv'),
+    is_movie: isMovie
   };
 }
 

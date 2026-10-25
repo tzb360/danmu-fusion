@@ -50,6 +50,7 @@ export function processDanmakuMerge(body = {}) {
   }
   const sources = body.sources || [];
   const parseOptions = {
+    preserveContent: body.rules?.forward_safe?.enabled === true,
     episode: body.episode ?? body.default_episode ?? null
   };
 
@@ -82,8 +83,12 @@ export function processDanmakuMerge(body = {}) {
   try {
     processed = processDanmakuItems(allItems, rules);
   } catch (error) {
-    // 清洗失败时尽量保底返回已解析的抽样子集，而不是整片 0
-    const fallback = allItems.slice(0, Math.min(5000, allItems.length));
+    // 清洗失败时尽量保底返回已解析的抽样子集，而不是整片 0。
+    // 上限跟随 max_input_items 配置；默认不限制时不再硬编码截断。
+    const fallbackLimit = Number(rules?.performance?.max_input_items);
+    const fallback = Number.isFinite(fallbackLimit) && fallbackLimit > 0
+      ? allItems.slice(0, Math.min(fallbackLimit, allItems.length))
+      : allItems.slice();
     processed = {
       items: fallback,
       stats: {

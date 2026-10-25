@@ -1,4 +1,5 @@
 import { simplized } from '../utils/zh-util.js';
+import { fusionDedupe } from './forward-core.js';
 
 function normalizeWhitespace(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
@@ -11,7 +12,11 @@ export function normalizeStrictText(text) {
 }
 
 export function normalizeSemanticText(text) {
-  return normalizeStrictText(text)
+  return normalizeSemanticFromStrict(normalizeStrictText(text));
+}
+
+function normalizeSemanticFromStrict(strict) {
+  return strict
     .replace(/(这部|这个|这番|这剧|这片|这一部|这一集)/g, '这')
     .replace(/(动漫|动画片|动画|番剧|番|剧集|剧|片子|作品)/g, '作品')
     .replace(/(真的|真是|真|太|很|非常|特别|挺|也|超级|巨|好)/g, '')
@@ -139,7 +144,7 @@ function matchesRegex(text, regexes = []) {
 export function prepareDanmakuItem(item) {
   const content = item.content || '';
   const strict = normalizeStrictText(content);
-  const semantic = normalizeSemanticText(content);
+  const semantic = normalizeSemanticFromStrict(strict);
   return {
     ...item,
     content,
@@ -651,6 +656,21 @@ function stripInternalFields(item) {
 }
 
 export function processDanmakuItems(rawItems, rules) {
+  if (rules.forward_safe?.enabled) {
+    const result = fusionDedupe(rawItems, {
+      enabled: rules.forward_safe.dedupe !== false,
+      tolerance: rules.forward_safe.tolerance,
+      offsets: rules.forward_safe.offsets || {},
+      maxItems: rules.performance?.max_input_items
+    });
+    const counts = {};
+    result.items.forEach(item => { counts[item.source] = (counts[item.source] || 0) + 1; });
+    return { items: result.items, stats: {
+      source_counts_after: counts, timeline_offsets: rules.forward_safe.offsets || {},
+      removed_by_reason: { duplicate_exact: result.stats.exact, duplicate_similar: result.stats.near },
+      forward_safe: result.stats
+    }, removedSamples: [] };
+  }
   // 默认收紧上限；超限时等间隔截断而非抛错（抛错会导致整片 0 弹幕）
   const maxInputItems = rules.performance?.max_input_items ?? 80000;
   let inputItems = rawItems;

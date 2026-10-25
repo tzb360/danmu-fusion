@@ -10,8 +10,7 @@ import {
   findTitleById,
   findAnimeTitleById,
   getSearchCache,
-  getCommentCache,
-  setCommentCache
+  getCommentCache
 } from '../utils/cache-util.js';
 import { MERGE_DELIMITER } from '../utils/merge-util.js';
 import { extractEpisodeTitle } from '../utils/common-util.js';
@@ -246,7 +245,96 @@ export function selectExactEpisodeLink(links = [], targetEpisode = 1) {
  * @param {boolean} [options.strict=true] 严格集号匹配（默认 true，禁止 nearest）
  * @param {object} [options.debugOut] 若传入对象，写入 episode 匹配调试信息
  */
+/**
+ * 电影专用：收集弹幕源链接
+ * - 不要求 episode 编号
+ * - 每平台取一条有效 url（电影整片）
+ * - season/episode 0/缺失均为合法
+ */
+export function collectMovieSourcesFromAnimes(animes = [], sourceWeights = {}, options = {}) {
+  const order = globals.sourceOrderArr || [];
+  const found = [];
+  const seen = new Set();
+  const matchDebug = [];
+
+  for (const anime of animes) {
+    if (!anime) continue;
+    const links = (anime.links || []).filter((l) => l && (l.url || l.id));
+    if (!links.length) {
+      matchDebug.push({
+        anime_title: anime.animeTitle || '',
+        source: anime.source || 'unknown',
+        chosen: null,
+        policy: 'movie_no_links'
+      });
+      continue;
+    }
+
+    // 电影：优先取带 url 的全部平台；同一 anime 多 link 时每平台一条
+    for (const link of links) {
+      if (!link?.url && !link?.id) continue;
+      const sourceName = anime.source || 'unknown';
+      const platform = link.url
+        ? (inferPlatformFromUrl(link.url, link.title || sourceName) || sourceName)
+        : sourceName;
+      const parts = link.url ? parseCompositeUrl(link.url) : [];
+      const candidates = parts.length > 1
+        ? parts
+        : [{ source: platform, id: link.url || link.id, raw: link.url || null }];
+      for (const part of candidates) {
+        const src = part.source || platform;
+        const key = `${src}|${part.id || part.raw || link.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({
+          source: src,
+          url: link.url ? (part.id || part.raw || link.url) : null,
+          full_url: link.url
+            ? (part.raw?.includes?.(':') ? part.raw : (String(link.url).includes(':') ? link.url : `${src}:${link.url}`))
+            : null,
+          anime_title: anime.animeTitle || '',
+          episode_title: link.title || anime.animeTitle || '',
+          weight: resolveSourceWeight(src, order, sourceWeights),
+          episode_id: link.id,
+          matched_episode: null,
+          match_reason: 'movie_full'
+        });
+        matchDebug.push({
+          anime_title: anime.animeTitle || '',
+          source: src,
+          chosen: { reason: 'movie_full', title: link.title || '' },
+          policy: 'movie_no_episode'
+        });
+      }
+    }
+  }
+
+  found.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  if (options.debugOut && typeof options.debugOut === 'object') {
+    options.debugOut.input_episode = null;
+    options.debugOut.policy = 'movie_no_episode';
+    options.debugOut.anime_matches = matchDebug;
+    options.debugOut.selected_sources = found.map((s) => ({
+      source: s.source,
+      episode_title: s.episode_title,
+      matched_episode: null,
+      match_reason: s.match_reason
+    }));
+  }
+  log(
+    'info',
+    `[MovieMatch] animes=${animes.length} sources=${found.length} ` +
+      `[${found.map((s) => s.source).join(',')}]`
+  );
+  return found;
+}
+
 export function collectEpisodeSourcesFromAnimes(animes = [], episodeNumber = 1, sourceWeights = {}, options = {}) {
+  // 电影模式：不走集号匹配
+  if (options.movie === true || options.mediaType === 'movie') {
+    return collectMovieSourcesFromAnimes(animes, sourceWeights, options);
+  }
+
   const order = globals.sourceOrderArr || [];
   const found = [];
   const seen = new Set();
@@ -349,17 +437,34 @@ export function discoverEpisodeSources(identity, options = {}) {
   const episode = identity.episode || 1;
   const title = identity.title || '';
 
-  // Forward 专属：只信调用方已版本校验过的 sources 列表
+  // Forward 专属：只信调用方已校验过的 sources 列表（movie/tv 均走此路径）
   if (options.strict_sources && Array.isArray(options.sources) && options.sources.length) {
+    const isMovie = identity.is_movie === true || identity.type === 'movie';
     for (const s of options.sources) {
       const source = s.source || s.platform || 'upload';
+      const fileName =
+        s.fileName ||
+        s.file_name ||
+        buildSourceFileLabel({
+          source,
+          original_title: s.original_title || identity.original_title,
+          title: s.anime_title || title,
+          region: s.region || identity.region,
+          year: s.year || identity.year,
+          season: isMovie ? null : identity.season,
+          episode: isMovie ? null : identity.episode,
+          url: s.url || s.id || '',
+          type: isMovie ? 'movie' : 'tv',
+          is_movie: isMovie
+        });
       sources.push({
         source,
         url: s.url || s.id || '',
-        full_url: s.url || s.id || s.full_url || '',
+        full_url: s.full_url || s.url || s.id || '',
         data: s.data || s.comments || null,
         content: s.content || null,
-        fileName: s.fileName || s.file_name || null,
+        fileName,
+        file_name: fileName,
         anime_title: s.anime_title || title,
         episode_title: s.episode_title || '',
         weight: resolveSourceWeight(source, globals.sourceOrderArr, weights),
@@ -367,8 +472,11 @@ export function discoverEpisodeSources(identity, options = {}) {
         region: s.region || identity.region || null,
         year: s.year || identity.year || null,
         original_title: s.original_title || identity.original_title || null,
-        season: identity.season,
-        episode: identity.episode
+        season: isMovie ? null : identity.season,
+        episode: isMovie ? null : identity.episode,
+        match_reason: s.match_reason || (isMovie ? 'movie_full' : null),
+        matched_episode: isMovie ? null : (s.matched_episode ?? identity.episode),
+        type: isMovie ? 'movie' : 'tv'
       });
     }
     sources.sort((a, b) => (b.weight || 0) - (a.weight || 0));
@@ -497,12 +605,12 @@ async function fetchOneSource(sourceItem, guardConfig = null) {
   }
 
   // 短缓存命中单源（仅当有数据）
-  const cached = getCommentCache(url);
+  const cached = cfg.skipCommentCache ? null : getCommentCache(url);
   if (cached && Array.isArray(cached) && cached.length > 0) {
     return {
       source: sourceName,
       weight: sourceItem.weight || 1,
-      items: cached.map(c => ({ p: c.p, m: c.m, content: c.m, source: sourceName })),
+      items: cached.map(c => ({ p: c.p, m: c.m, content: c.m, recordId:c.cid, source: sourceName })),
       count_raw: cached.length,
       error: null,
       from_cache: true
@@ -544,6 +652,7 @@ async function fetchOneSource(sourceItem, guardConfig = null) {
             content: item.m,
             source: sourceName,
             id: item.cid || `${sourceName}-${index}`,
+            recordId: item.cid,
             _weight: sourceItem.weight || 1
           };
         }
@@ -615,6 +724,7 @@ function buildMergeSources(fetchResults) {
  *   → 质量排序 → 分源清洗合并 → 最终上限 → 缓存保护
  */
 export async function aggregateEpisode(query = {}) {
+  const traceId = query.trace_id || '-';
   const identity = buildEpisodeIdentity(query);
   const force = query.force === true || query.refresh === true;
   const guardConfig = getGuardConfig();
@@ -622,7 +732,7 @@ export async function aggregateEpisode(query = {}) {
   if (!force) {
     const cached = await loadEpisodeCache(identity.key);
     if (cached?.comments?.length) {
-      log('info', `[EpisodeAggregate] cache hit ${identity.key} (${cached.comments.length})`);
+      log('info', `[EpisodeAggregate][trace=${traceId}] cache hit ${identity.key} (${cached.comments.length})`);
       return {
         success: true,
         cached: true,
@@ -657,14 +767,14 @@ export async function aggregateEpisode(query = {}) {
     };
   }
 
-  log('info', `[EpisodeAggregate] ${identity.key} discovering ${discovered.length} sources: ${discovered.map(s => `${s.source}:${s.anime_title || ''}`).join(' | ')}`);
+  log('info', `[EpisodeAggregate][trace=${traceId}] ${identity.key} discovering ${discovered.length} sources: ${discovered.map(s => `${s.source}:${s.anime_title || ''}`).join(' | ')}`);
   for (const s of discovered) {
     log('info', `[EpisodeAggregate][source] platform=${s.source} title=${s.anime_title || '-'} ep=${s.episode_title || '-'} url=${String(s.url || '').slice(0, 80)}`);
   }
 
   // 并行抓取；单源失败只记 status=failed
   const fetchResults = await Promise.all(
-    discovered.map((s) => fetchOneSource(s, guardConfig).then((fr) => ({
+    discovered.map((s) => fetchOneSource(s, { ...guardConfig, skipCommentCache:query.rules?.forward_safe?.enabled === true }).then((fr) => ({
       ...fr,
       anime_title: s.anime_title,
       episode_title: s.episode_title,
@@ -683,7 +793,7 @@ export async function aggregateEpisode(query = {}) {
   for (const fr of fetchResults) {
     log(
       'info',
-      `[EpisodeAggregate][count] source=${fr.source} raw=${fr.count_raw || 0} err=${fr.error || '-'} title=${fr.anime_title || '-'}`
+      `[EpisodeAggregate][trace=${traceId}][count] source=${fr.source} raw=${fr.count_raw || 0} err=${fr.error || '-'} title=${fr.anime_title || '-'}`
     );
   }
 
@@ -741,9 +851,12 @@ export async function aggregateEpisode(query = {}) {
     // 聚合异常：尽量从各源已保护数据中拼接保底结果，避免整片 0
     log('error', `[EpisodeAggregate] merge failed, fallback per-source: ${error.message}`);
     const fallbackItems = [];
+    // 回退上限跟随运行时配置：默认不限制（Infinity），不再硬编码 3000。
+    // 如需在异常路径上收紧，可显式设置 AGGREGATE_MAX_PER_SOURCE。
+    const fallbackCap = Number.isFinite(guardConfig.perSourceMax) ? guardConfig.perSourceMax : Infinity;
     for (const fr of protectedSources) {
       if (!fr.items?.length) continue;
-      const take = Math.min(fr.items.length, 3000);
+      const take = Math.min(fr.items.length, fallbackCap);
       for (let i = 0; i < take; i++) {
         const it = fr.items[i];
         fallbackItems.push(
@@ -818,11 +931,11 @@ export async function aggregateEpisode(query = {}) {
 
   logEpisodeDiagnostics(identity, sourceMeta, stats);
 
-  const entry = {
-    key: identity.key,
-    identity: {
-      ...identity,
-      display: formatVersionDisplay({
+  const isMovie = identity.is_movie === true || identity.type === 'movie';
+  // 展示：电影 = 片名 (年)；电视剧 = 片名 (地区 年) SxxExx
+  const display = isMovie
+    ? `${identity.title || '未知'}${identity.year ? ` (${identity.year})` : ''}`
+    : formatVersionDisplay({
         title: identity.title,
         region: identity.region,
         region_label: identity.region_label,
@@ -830,34 +943,34 @@ export async function aggregateEpisode(query = {}) {
         season: identity.season,
         episode: identity.episode,
         withEpisode: true
-      })
+      });
+
+  const entry = {
+    key: identity.key,
+    identity: {
+      ...identity,
+      display
     },
-    display: formatVersionDisplay({
-      title: identity.title,
-      region: identity.region,
-      region_label: identity.region_label,
-      year: identity.year,
-      season: identity.season,
-      episode: identity.episode,
-      withEpisode: true
-    }),
+    display,
+    // 来源统计：完整 metadata（文件名 / provider / 数量 / 聚合关系）
     sources: sourceMeta,
     sources_detail: sourceMeta,
+    sources_summary: sourceMeta.map((s) => ({
+      source: s.source,
+      provider: s.provider || s.source,
+      file_name: s.file_name,
+      count_raw: s.count_raw,
+      count_used: s.count_used,
+      matched_title: s.matched_title,
+      status: s.status
+    })),
     stats,
     comments
   };
 
   // 仅非空结果可缓存
-  if (comments.length > 0) {
+  if (comments.length > 0 && !(query.rules?.forward_safe?.enabled && sourceMeta.some(s => s.error || s.status === 'failed'))) {
     await saveEpisodeCache(entry);
-    for (const s of discovered) {
-      if (s.url) {
-        try { setCommentCache(s.url, comments); } catch { /* ignore */ }
-      }
-      if (s.full_url && s.full_url !== s.url) {
-        try { setCommentCache(s.full_url, comments); } catch { /* ignore */ }
-      }
-    }
   } else {
     log('info', `[EpisodeCache] skip empty result for ${identity.key}`);
   }
@@ -882,39 +995,55 @@ export async function aggregateEpisode(query = {}) {
 }
 
 function summarizeSourceMeta(fr, identity) {
-  const file_name = fr.fileName || buildSourceFileLabel({
-    source: fr.source,
-    original_title: fr.original_title || identity.original_title,
-    title: fr.anime_title || identity.title,
-    region: fr.region || identity.region,
-    year: fr.year || identity.year,
-    season: fr.season ?? identity.season,
-    episode: fr.episode ?? identity.episode,
-    url: fr.url
-  });
+  const isMovie = identity?.is_movie === true || identity?.type === 'movie';
+  const season = isMovie ? null : (fr.season ?? identity.season ?? null);
+  const episode = isMovie ? null : (fr.episode ?? identity.episode ?? null);
+  // 优先使用上游已构造的原始文件名；否则按 movie/tv 规则生成
+  const file_name =
+    fr.fileName ||
+    fr.file_name ||
+    buildSourceFileLabel({
+      source: fr.source,
+      original_title: fr.original_title || identity.original_title,
+      title: fr.anime_title || identity.title,
+      region: fr.region || identity.region,
+      year: fr.year || identity.year,
+      season,
+      episode,
+      url: fr.url,
+      type: isMovie ? 'movie' : 'tv',
+      is_movie: isMovie
+    });
   return {
+    // —— web 面板「来源统计」必需字段 ——
     source: fr.source,
+    provider: fr.source,
+    file_name,
+    raw_file: file_name,
+    fileName: file_name,
     count_raw: fr.count_raw || 0,
     count_sampled: fr.count_sampled ?? null,
-    count_used: fr.count_used ?? fr.count_sampled ?? null,
+    count_used: fr.count_used ?? fr.count_sampled ?? fr.count_raw ?? 0,
+    // —— 匹配 / 聚合关系 ——
+    matched_title: fr.anime_title || null,
+    anime_title: fr.anime_title || null,
+    episode_title: fr.episode_title || null,
+    matched_episode: isMovie ? null : (fr.matched_episode ?? identity.episode ?? null),
+    match_reason: fr.match_reason || (isMovie ? 'movie_full' : null),
+    original_title: fr.original_title || identity.original_title || null,
+    region: fr.region || identity.region || null,
+    region_label: identity.region_label || null,
+    year: fr.year || identity.year || null,
+    season,
+    episode,
+    type: isMovie ? 'movie' : 'tv',
+    // —— 状态 ——
     quality_score: fr.quality_score ?? null,
     sample_method: fr.sample_method || null,
     status: fr.status || (fr.error ? 'failed' : 'ok'),
     weight: fr.weight,
     error: fr.error || fr.fail_reason || null,
     from_cache: Boolean(fr.from_cache),
-    matched_title: fr.anime_title || null,
-    episode_title: fr.episode_title || null,
-    matched_episode: fr.matched_episode ?? identity.episode ?? null,
-    match_reason: fr.match_reason || null,
-    original_title: fr.original_title || identity.original_title || null,
-    region: fr.region || identity.region || null,
-    region_label: identity.region_label || null,
-    year: fr.year || identity.year || null,
-    season: fr.season ?? identity.season,
-    episode: fr.episode ?? identity.episode,
-    file_name,
-    raw_file: file_name,
     url: fr.url || null
   };
 }

@@ -176,9 +176,10 @@ function buildStandardDanmaku(raw, context = {}) {
 
   return {
     id: raw.id ?? raw.cid ?? raw.dmid ?? raw.danmakuId ?? null,
+    recordId: raw.recordId ?? raw.cid ?? raw.dmid ?? raw.danmakuId ?? null,
     time: Number(time.toFixed(3)),
     timestamp: Number(time.toFixed(3)),
-    content: simplized(content),
+    content: context.preserveContent ? String(raw.content ?? raw.text ?? raw.m ?? content) : simplized(content),
     color: parseColor(raw.color ?? parsedP?.color),
     position: normalizePosition(raw.position ?? raw.mode ?? raw.ct ?? parsedP?.position),
     source,
@@ -310,7 +311,7 @@ export function parseDanmakuSources(sources = [], options = {}) {
     const { payload: rawPayload, meta } = normalizeSourcePayload(sourceInput);
     const sourceName = inferSourceName(meta, `source_${index + 1}`);
     const episode = meta.episode ?? options.episode ?? null;
-    const context = { source: sourceName, episode };
+    const context = { source: sourceName, episode, preserveContent:options.preserveContent === true };
     let payload = rawPayload;
 
     if (meta.encoding === 'base64' && typeof payload === 'string') {

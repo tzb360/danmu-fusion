@@ -13,7 +13,7 @@ import { log } from '../utils/log-util.js';
 import { globals } from '../configs/globals.js';
 
 /** 缓存协议版本：结构变化时抬升，旧缓存自动失效 */
-export const EPISODE_CACHE_VERSION = 2;
+export const EPISODE_CACHE_VERSION = 3;
 
 /**
  * 运行时保护参数（可用环境变量覆盖）
@@ -22,22 +22,24 @@ export function getGuardConfig() {
   const danmuLimitK = Number(globals.danmuLimit) || 0;
   const perSourceFromLimit = danmuLimitK > 0 ? danmuLimitK * 1000 : 0;
 
-  const perSourceMax = positiveInt(
+  // 弹幕数量：默认不限制（0 = 不限）。
+  // 只有显式配置了 DANMU_LIMIT（>0，单位千）或对应 AGGREGATE_* 变量时才生效。
+  const perSourceMax = resolveCap(
     process.env.AGGREGATE_MAX_PER_SOURCE || process.env.EPISODE_AGGREGATE_MAX_RAW,
-    perSourceFromLimit || 35000
+    perSourceFromLimit
   );
-  const totalMax = positiveInt(
+  const totalMax = resolveCap(
     process.env.AGGREGATE_MAX_TOTAL,
-    Math.max(perSourceMax, perSourceFromLimit || 60000)
+    perSourceFromLimit
   );
-  const finalMax = positiveInt(
+  const finalMax = resolveCap(
     process.env.AGGREGATE_FINAL_MAX || (danmuLimitK > 0 ? danmuLimitK * 1000 : 0),
-    Math.min(totalMax, 50000)
+    perSourceFromLimit
   );
   const bucketCount = positiveInt(process.env.AGGREGATE_TIME_BUCKETS, 120);
   const fetchTimeoutMs = positiveInt(process.env.AGGREGATE_SOURCE_TIMEOUT_MS, 45000);
   const cacheTtlMinutes = positiveInt(process.env.EPISODE_CACHE_TTL_MINUTES, 180);
-  const cacheMaxComments = positiveInt(process.env.EPISODE_CACHE_MAX_COMMENTS, finalMax);
+  const cacheMaxComments = resolveCap(process.env.EPISODE_CACHE_MAX_COMMENTS, finalMax);
   const cacheMaxBytes = positiveInt(process.env.EPISODE_CACHE_MAX_BYTES, 8 * 1024 * 1024);
   const heapSoftMb = positiveInt(process.env.AGGREGATE_HEAP_SOFT_MB, 280);
 
@@ -60,6 +62,27 @@ function positiveInt(v, fallback) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/**
+ * 解析数量上限：返回 Infinity 表示「不限制」。
+ *
+ * 规则（按优先级）：
+ *  1. 环境变量显式为 0 / 空 / negative → 不限制
+ *  2. 环境变量为正数 → 使用该值
+ *  3. 未设置 → 回落到 fallback（DANMU_LIMIT 换算值）；fallback 为 0 时同样表示不限制
+ *
+ * 这样默认部署即为「无弹幕数量限制」，同时保留按需收紧的能力。
+ */
+function resolveCap(rawValue, fallback) {
+  if (rawValue !== undefined && rawValue !== null && String(rawValue).trim() !== '') {
+    const n = Number(rawValue);
+    if (!Number.isFinite(n) || n <= 0) return Infinity;
+    return Math.floor(n);
+  }
+  const fb = Number(fallback);
+  if (!Number.isFinite(fb) || fb <= 0) return Infinity;
+  return Math.floor(fb);
+}
+
 export function getMemorySnapshot() {
   try {
     if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') return null;
@@ -78,18 +101,40 @@ function roundMb(bytes) {
   return Number((bytes / 1024 / 1024).toFixed(2));
 }
 
-/** 堆压力：超过 soft 阈值时收紧采样上限 */
+/**
+ * 堆压力：超过 soft 阈值时收紧采样上限。
+ *
+ * 注意：收紧会让「不限制」变成隐性限制，因此当某个上限为 Infinity（即用户要求不限）
+ * 时默认**不**收紧，只在高堆压时打印告警。若确实希望在内存紧张时强制收紧，
+ * 可显式设置 AGGREGATE_ADAPTIVE_CAPS=true。
+ */
 export function adaptiveCaps(config, memory = getMemorySnapshot()) {
   let { perSourceMax, totalMax, finalMax } = config;
   const heap = memory?.heap_used_mb || 0;
+  const override = String(process.env.AGGREGATE_ADAPTIVE_CAPS ?? '').toLowerCase();
+  const unlimited = !Number.isFinite(perSourceMax) || !Number.isFinite(totalMax) || !Number.isFinite(finalMax);
+
+  // 明确关闭，或（默认情况下）存在「不限」上限时，不做隐性收紧。
+  if (override === 'false' || (override !== 'true' && unlimited)) {
+    if (unlimited && heap >= config.heapSoftMb) {
+      log(
+        'warn',
+        `[DanmuGuard] heap_used=${heap}MB 超过 soft 阈值 ${config.heapSoftMb}MB，但当前配置为「不限制弹幕数量」，已跳过自动收紧。` +
+        '如遇 OOM 可设置 AGGREGATE_ADAPTIVE_CAPS=true 或显式配置 AGGREGATE_FINAL_MAX。'
+      );
+    }
+    return { ...config, perSourceMax, totalMax, finalMax, memory };
+  }
+
+  const tighten = (cap, limit) => (Number.isFinite(cap) ? Math.min(cap, limit) : limit);
   if (heap >= config.heapSoftMb * 1.2) {
-    perSourceMax = Math.min(perSourceMax, 12000);
-    totalMax = Math.min(totalMax, 25000);
-    finalMax = Math.min(finalMax, 20000);
+    perSourceMax = tighten(perSourceMax, 12000);
+    totalMax = tighten(totalMax, 25000);
+    finalMax = tighten(finalMax, 20000);
   } else if (heap >= config.heapSoftMb) {
-    perSourceMax = Math.min(perSourceMax, 20000);
-    totalMax = Math.min(totalMax, 40000);
-    finalMax = Math.min(finalMax, 30000);
+    perSourceMax = tighten(perSourceMax, 20000);
+    totalMax = tighten(totalMax, 40000);
+    finalMax = tighten(finalMax, 30000);
   }
   return { ...config, perSourceMax, totalMax, finalMax, memory };
 }

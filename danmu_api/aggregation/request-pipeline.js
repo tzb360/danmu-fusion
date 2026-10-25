@@ -150,6 +150,7 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
   try {
     if (!meta.title && !meta.tmdb_id && !meta.imdb_id) return null;
     const identity = buildEpisodeIdentity({
+      processing_profile: meta.processing_profile,
       title: meta.title || '',
       original_title: meta.original_title || null,
       tmdb_id: meta.tmdb_id || null,
@@ -157,8 +158,11 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
       region: meta.region || null,
       region_label: meta.region_label || null,
       year: meta.year || null,
-      season: meta.season || 1,
-      episode: meta.episode || 1
+      version_key: meta.version_key || null,
+      season: meta.is_movie === true || meta.type === 'movie' ? null : (meta.season ?? 1),
+      episode: meta.is_movie === true || meta.type === 'movie' ? null : (meta.episode ?? 1),
+      type: meta.type || null,
+      is_movie: meta.is_movie === true || meta.isMovie === true
     });
     await saveEpisodeCache({
       key: identity.key,
@@ -171,6 +175,8 @@ export async function autoSaveEpisodeCache(meta = {}, pipelineResult = {}) {
         removed: pipelineResult.stats?.removed,
         removed_by_reason: pipelineResult.stats?.removed_by_reason || {}
       },
+      providerStats: pipelineResult.providerStats || null,
+      danmuStats: pipelineResult.danmuStats || null,
       comments: pipelineResult.comments || []
     });
     return identity.key;
@@ -184,6 +190,7 @@ export async function tryLoadEpisodeCache(meta = {}) {
   try {
     if (!meta.title && !meta.tmdb_id && !meta.imdb_id) return null;
     const identity = buildEpisodeIdentity({
+      processing_profile: meta.processing_profile,
       title: meta.title || '',
       original_title: meta.original_title || null,
       tmdb_id: meta.tmdb_id || null,
@@ -191,8 +198,11 @@ export async function tryLoadEpisodeCache(meta = {}) {
       region: meta.region || null,
       region_label: meta.region_label || null,
       year: meta.year || null,
-      season: meta.season || 1,
-      episode: meta.episode || 1
+      version_key: meta.version_key || null,
+      season: meta.is_movie === true || meta.type === 'movie' ? null : (meta.season ?? 1),
+      episode: meta.is_movie === true || meta.type === 'movie' ? null : (meta.episode ?? 1),
+      type: meta.type || null,
+      is_movie: meta.is_movie === true || meta.isMovie === true
     });
     const cached = await loadEpisodeCache(identity.key);
     if (cached?.comments?.length) {
@@ -201,7 +211,9 @@ export async function tryLoadEpisodeCache(meta = {}) {
         comments: finalizePlayerComments(cached.comments),
         stats: cached.stats,
         sources: cached.sources,
-        identity: cached.identity
+        identity: cached.identity,
+        providerStats: cached.providerStats || null,
+        danmuStats: cached.danmuStats || null
       };
     }
   } catch { /* ignore */ }
