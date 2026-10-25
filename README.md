@@ -7,6 +7,8 @@
 
 **Danmu Fusion 是播放器模块，不是 danmu_api 服务端。** 模块需要连接另行部署的兼容 API，不附带公共接口、账号或密钥。仓库公开完整维护源码、独立构建脚本和测试，并保留基于 [danmu_api](https://github.com/huangxd-/danmu_api) 的历史后端源码与许可。
 
+Telegram 频道：[@mkfx360](https://t.me/mkfx360)
+
 ## 在线安装
 
 复制下面的 Raw 直链，在播放器的模块管理中选择「通过链接添加」或「通过 URL 导入」，粘贴后确认：
