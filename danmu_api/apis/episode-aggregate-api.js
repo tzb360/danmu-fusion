@@ -109,13 +109,27 @@ export async function handleForwardDanmaku(req, url) {
 
     const fwd = await getForwardDanmaku(url);
 
+    // 无弹幕时仍返回 404，但必须带齐 media/candidates/meta，
+    // 否则调用方无法验证 movie/tv 分流与匹配链路（通用流程可观测性）
     if (!fwd.success && (!fwd.payload?.comments || !fwd.payload.comments.length)) {
+      const emptyPayload = fwd.payload || {};
       return jsonResponse({
         errorCode: 404,
         success: false,
         errorMessage: fwd.errorMessage || 'no danmaku',
         count: 0,
-        comments: []
+        comments: [],
+        media: emptyPayload.media || null,
+        candidates: emptyPayload.candidates || [],
+        selected_version: emptyPayload.selected_version || null,
+        meta: emptyPayload.meta || {
+          media: emptyPayload.media || fwd.internal?.media || null,
+          key: fwd.internal?.key || null,
+          sources: fwd.internal?.sources || [],
+          sources_detail: fwd.internal?.sources || [],
+          processing_ms: fwd.internal?.processing_ms || null,
+          errorMessage: fwd.errorMessage || 'no danmaku'
+        }
       }, 404);
     }
 
@@ -164,7 +178,11 @@ export async function handleForwardDanmaku(req, url) {
     if (media?.tmdb_id && /^[\x00-\x7F]+$/.test(String(media.tmdb_id))) {
       headers['X-Danmaku-Tmdb-Id'] = String(media.tmdb_id);
     }
-    return jsonResponse(fwd.payload, 200, headers);
+    const { sliceForwardPayload } = await import('../forward_adapter/options.js');
+    return jsonResponse(sliceForwardPayload({
+      ...fwd.payload,
+      partial: (fwd.internal?.sources || []).some(s => s.error || s.status === 'failed')
+    }, url.searchParams), 200, headers);
   } catch (error) {
     const status = error.status || (error instanceof TypeError ? 400 : 500);
     log(status >= 500 ? 'error' : 'warn', `[ForwardAdapter] danmaku failed: ${error.message}`);
