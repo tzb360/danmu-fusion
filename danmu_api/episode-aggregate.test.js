@@ -1,20 +1,88 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEpisodeIdentity, resolveSourceWeight, normalizeTitle } from './aggregation/episode-identity.js';
-import { collectEpisodeSourcesFromAnimes, aggregateEpisode, discoverEpisodeSources } from './aggregation/episode-service.js';
+import { buildEpisodeIdentity, resolveSourceWeight, normalizeTitle, buildSourceFileLabel } from './aggregation/episode-identity.js';
+import { collectEpisodeSourcesFromAnimes, collectMovieSourcesFromAnimes, aggregateEpisode, discoverEpisodeSources } from './aggregation/episode-service.js';
 import { saveEpisodeCache, loadEpisodeCache, listEpisodeCaches, deleteEpisodeCache } from './aggregation/episode-cache.js';
 import { Globals } from './configs/globals.js';
 
 test('episode identity prefers tmdb key', () => {
   const id = buildEpisodeIdentity({ title: '生万物', tmdb_id: '99', season: 1, episode: 3 });
-  assert.equal(id.key, 'tmdb:99:s1:e3');
+  assert.equal(id.key, 'cv3:tmdb:99:tv:s1:e3');
   assert.equal(id.season, 1);
   assert.equal(id.episode, 3);
 });
 
+test('episode identity binds version for same tmdb', () => {
+  const us = buildEpisodeIdentity({
+    title: '无耻之徒',
+    tmdb_id: '34307',
+    season: 4,
+    episode: 12,
+    region: 'us',
+    year: '2011',
+    version_key: 'us:2011:s4'
+  });
+  const uk = buildEpisodeIdentity({
+    title: '无耻之徒',
+    tmdb_id: '34307',
+    season: 4,
+    episode: 12,
+    region: 'uk',
+    year: '2004',
+    version_key: 'uk:2004:s4'
+  });
+  assert.equal(us.key, 'cv3:tmdb:34307:tv:s4:e12:vus:2011:s4');
+  assert.equal(uk.key, 'cv3:tmdb:34307:tv:s4:e12:vuk:2004:s4');
+  assert.notEqual(us.key, uk.key);
+});
+
+test('movie identity has no season/episode in key', () => {
+  const m = buildEpisodeIdentity({
+    title: '007：大战皇家赌场',
+    tmdb_id: '36557',
+    year: '2006',
+    type: 'movie',
+    is_movie: true,
+    season: 0,
+    episode: 0
+  });
+  assert.match(m.key, /^cv\d+:tmdb:36557:movie:y2006$/);
+  assert.equal(m.season, null);
+  assert.equal(m.episode, null);
+  assert.equal(m.is_movie, true);
+});
+
+test('movie source collector preserves id-only provider links', () => {
+  const sources = collectMovieSourcesFromAnimes([{
+    animeTitle: '测试电影(2025)【电影】from dandan',
+    source: 'dandan',
+    links: [{ id: 'comment-123', title: '测试电影' }]
+  }]);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].episode_id, 'comment-123');
+  assert.equal(sources[0].url, null);
+});
+
+test('movie source file label has no S01E01', () => {
+  const name = buildSourceFileLabel({
+    original_title: 'Casino Royale',
+    title: '007：大战皇家赌场',
+    year: '2006',
+    type: 'movie',
+    is_movie: true,
+    season: 0,
+    episode: 0,
+    source: 'bilibili'
+  });
+  assert.ok(!/S\d+E\d+/i.test(name), name);
+  assert.ok(name.includes('2006'), name);
+  assert.ok(name.includes('bilibili'), name);
+  assert.ok(name.endsWith('.xml'), name);
+});
+
 test('episode identity falls back to normalized title', () => {
   const id = buildEpisodeIdentity({ title: '生 万 物', season: 2, episode: 1 });
-  assert.ok(id.key.startsWith('title:'));
+  assert.ok(id.key.startsWith('cv3:title:'));
   assert.ok(id.key.includes(':s2:e1'));
   assert.equal(normalizeTitle('生 万 物'), id.title_key);
 });
