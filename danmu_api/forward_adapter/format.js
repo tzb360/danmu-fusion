@@ -140,6 +140,22 @@ export function applyPlayerPresentation(comments = [], opts = {}) {
 }
 
 /**
+ * 统计最终将发送给播放器的队列。调用方不得以 XML、缓存或聚合中间态代替。
+ */
+export function buildFinalDanmuStats(comments = [], opts = null) {
+  const finalQueue = opts ? applyPlayerPresentation(comments, opts) : comments;
+  const stats = { normal: 0, top: 0, bottom: 0, final: 0 };
+  for (const comment of Array.isArray(finalQueue) ? finalQueue : []) {
+    const mode = String(comment?.p || '').split(',')[1]?.trim();
+    if (mode === '5') stats.top += 1;
+    else if (mode === '4') stats.bottom += 1;
+    else stats.normal += 1;
+    stats.final += 1;
+  }
+  return stats;
+}
+
+/**
  * Forward 标准 JSON 响应体（dandan 兼容，无来源展示）
  * @param {object} options
  * @param {Array} options.comments - 内部评论（可含 source）

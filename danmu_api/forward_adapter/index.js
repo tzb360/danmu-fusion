@@ -7,6 +7,7 @@ export {
   stripSourceFromP,
   toPlayerComment,
   toPlayerComments,
+  buildFinalDanmuStats,
   buildForwardDanmakuPayload,
   toPlayerXml,
   toPlayerAss,
