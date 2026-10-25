@@ -6,6 +6,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VCS_REF: "${VCS_REF:-unknown}"
     image: danmu-api:local
     container_name: danmu-api
     ports:

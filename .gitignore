@@ -1,5 +1,4 @@
 .idea
-package-lock.json
 node_modules
 .env
 .cache
@@ -23,3 +22,7 @@ config/.env.backup.*
 node_modules/
 dist/
 ForwardWidgets-master/
+
+# Private diagnostics and optional reference modules
+artifacts/
+forward-module/danmu-fusion/references/

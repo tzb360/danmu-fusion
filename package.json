@@ -8,10 +8,19 @@
     "start": "node danmu_api/server.js",
     "test": "node --test ./danmu_api/*.test.js",
     "test:aggregation": "node --test ./danmu_api/aggregation.test.js ./danmu_api/episode-aggregate.test.js",
-    "build-forward-widget": "node build-forward-widget.js"
+    "build-forward-widget": "node build-forward-widget.js",
+    "build:forward-fusion": "node scripts/build-danmu-fusion.mjs",
+    "test:forward-fusion": "node --test forward-module/danmu-fusion/*.test.mjs danmu_api/forward_adapter/*.test.js",
+    "test:all": "npm test && npm run test:forward-fusion && node forward-module/danmu-fusion/test-tv-identity.mjs && node forward-module/danmu-fusion/test-identity.mjs",
+    "test:forward-live": "node forward-module/danmu-fusion/test-danmu-fusion.mjs",
+    "test:forward-live-matrix": "node forward-module/danmu-fusion/test-live-matrix.mjs",
+    "test:forward-native": "node --test forward-module/danmu-fusion/forward-baseline.test.mjs",
+    "test:forward-match-live": "node forward-module/danmu-fusion/test-match-live.mjs",
+    "test:forward-native-merge": "node forward-module/danmu-fusion/test-native-merge.mjs",
+    "test:forward-reference-live": "node forward-module/danmu-fusion/test-reference-live.mjs"
   },
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "chokidar": "^4.0.3",
     "dotenv": "^16.4.7",
