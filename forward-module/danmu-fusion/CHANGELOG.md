@@ -1,0 +1,69 @@
+# Changelog
+
+## 1.4.5 - 2026-10-25
+
+- 在同名不同年份的候选确需消歧时，使用标准 POST match 的 filename-only 模式辅助复核；没有虚构 year 请求字段。
+- 不信任单独 isMatched 标记，复核真实资源 ID、片名、年份、类型和集数；服务端错误返回第一季时仍拒绝采纳。
+- 后续季不使用系列首播年冒充当前季年份；缺乏 airDate 等可靠依据时跳过额外匹配。
+- 不支持 match 或网络/JSON 异常时保留标准搜索结果；不改变真实 ID 选集及评论入口，不二次应用 shift，原生多源资源优先。
+- 新增 8 项年份辅助回归，并修复数字电影名（如 2001太空漫游）的年份识别边界。
+
+## 1.4.4 - 2026-10-25
+
+- 修复 Rex 手动搜索 title 被 seriesName 覆盖；排除已知错误剧名、季数、类型及纪录片、解说候选，避免播放器自动探索时加载错误资源。
+- 服务端原生合并覆盖所有已启用且能可靠匹配的原生来源，生产 1.21.7 增加严格剧名、年份、类型、季集保护层。
+- 支持超过 20 万条的合法聚合电影响应，新增 22 万条完整轨道回归，不抽样或修改时间轴。
+- 新增真实多源标签统计和进度复测脚本，保留标准单来源协议和一个 API 地址配置。
+
+## 1.4.3 - 2026-10-25（中间验证版）
+
+- 增加大聚合轨道支持，三个作品真实 API 通过；随后实机发现的手动搜索和候选探索问题由 1.4.4 修复。
+
+## 1.4.2 - 2026-10-25
+
+- 修复对浏览器计时器的无条件依赖；新增不注入浏览器/Node 全局、字符串存储的 Widget 测试基线。
+- 公开入口改为标准真实 ID 搜索→分集→评论流程，评论保留 Rex 的 response.data 模型及 async/withRelated/chConvert 参数。
+- 不再把缺失年份或播放上下文作为获取已选中弹幕的阻断条件；不再默认返回客户端合成聚合 ID。
+- 添加阶段诊断和安全错误分类；明确禁止记录 Token、URL、认证头和原始异常。
+- 显式关闭播放器外层长期缓存，保留轻量有界缓存、准确重放去重、官方 GET 分片支持及原始样式/时间。
+- 旧客户端跨平台自动合并引擎保留但不接入公开播放入口；优先使用服务端原生合并。
+- 对照三份用户参考模块；实际更新 macOS Rex 并验证 S04E02 的弹幕显示及进度跳转。
+
+## 1.4.1 - 2026-10-25
+
+- 修复数字季名、本地化剧集分类及带来源标签的数字集名；首播年份适配需首季及目标季的保守证据，重拍年份冲突继续拒绝。
+- 按 Forward 官方示例返回弹幕数组；自动匹配使用可序列化整数 ID，详情使用标准 animeId。
+- 标准整集回退首次返回完整轨道，避免从中间续播为空；分片保持按进度加载。
+- 弹幕 cid 跨进度保持稳定；根据真实平台集名/链接识别来源，防止同平台重复获取或虚增聚合数量。
+- 冷搜索单独设置 90 秒等待，超时不立即重复请求；播放评论仍使用 30 秒限制。
+- 新增公开接口、跨作品匹配与进度回归，以及固定随机种子的真实多剧、多电影复测脚本。
+
+## 1.4.0 - 2026-10-25
+
+- 设置仅保留原名 danmu_api_url 的「弹幕 API 地址」，历史技术参数不再读取。
+- 统一弹弹 Play 兼容协议；保留 Token/代理路径，自动规范化 /api/v2 和旧 Forward 完整地址。
+- 保留匹配、原生/客户端聚合、保守去重、缓存和进度分片；自动退回标准评论接口。
+- 保留颜色、顶部和底部样式，采用服务端时间轴，移除本地偏移 JSON 和强制样式读取。
+- 迁移旧合成选择，升级独立缓存标识，增加设置/协议/实际本地 HTTP 链路回归。
+
+## 1.3.0 - 2026-10-25
+
+- 保留模块标识及配置，增加标准 API 模式、保守匹配和手动选择。
+- 增加官方进度入口、原生分片、专属 API 时间窗口、并发请求合并和有界 TTL 缓存。
+- 复用可测试的保守去重核心，保护高频短句和观众数量；来源偏移在去重前执行。
+- 根据真实集名确认编号，拒绝季集/年份/类型/特别篇冲突，未知总集数时只展示当前集。
+- 增加确定性、完整 Mock 链路和性能测试；校正真实联调报告并增加可重复构建检查。
+
+## 1.2.3 - 2026-07-13
+
+- Propagate the server `trace_id`, `ProviderStats`, and `DanmuStats` snapshot through Forward parsing.
+- Report parsed and final queue counts from the exact player queue, including normal/top/bottom classification.
+- Clone module cache values at both boundaries so one request cannot mutate another request's cached object.
+- Distinguish module status from queried, candidate, usable, failed, and empty provider counts.
+
+## 1.2.2 - 2026-07-13
+
+- unionId is the authoritative movie/tv and TV season/episode identity.
+- Movies never emit synthetic `S01E01`; TV cache keys include season and episode.
+- Forward API diagnostics distinguish no-source results from aggregation failures.
+- Widget package version is aligned with the module runtime and is hosted at `/widgets/danmu-fusion/widget.fwd` on Node deployments.

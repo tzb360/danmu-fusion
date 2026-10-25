@@ -1,0 +1,20 @@
+{
+  "title": "Danmu Fusion",
+  "description": "弹幕融合 · 极简配置 · 弹弹 Play 兼容协议 · 自动聚合弹幕",
+  "icon": "",
+  "website": "https://github.com/tzb360/danmu-fusion",
+  "widgets": [
+    {
+      "id": "tzb360.danmu.fusion",
+      "title": "Danmu Fusion",
+      "title_zh": "弹幕融合",
+      "description": "标准弹弹 Play 搜索、选集与弹幕加载；兼容 Forward Widget 运行时，仅需 API 地址，采用服务端聚合。",
+      "requiredVersion": "0.0.2",
+      "version": "1.4.5",
+      "author": "tzb360",
+      "website": "https://github.com/tzb360/danmu-fusion",
+      "site": "https://github.com/tzb360/danmu-fusion",
+      "url": "./danmu-fusion.js"
+    }
+  ]
+}
