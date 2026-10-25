@@ -19,18 +19,27 @@ async function loadEpisodeAggregateList() {
         listEl.innerHTML = items.map(item => {
             const id = item.identity || {};
             const title = item.display || id.display || id.title || id.tmdb_id || item.key;
-            const se = 'S' + String(id.season || '?').padStart(2,'0') + 'E' + String(id.episode || '?').padStart(2,'0');
+            const isMovie = id.is_movie === true || id.type === 'movie' || String(item.key || '').endsWith(':movie') || String(item.key || '').includes('_movie');
+            // 电影禁止展示假 SxxExx；电视剧显示季集
+            const typeTag = isMovie
+                ? '电影'
+                : ('S' + String(id.season || '?').padStart(2,'0') + 'E' + String(id.episode || '?').padStart(2,'0'));
             const reg = id.region_label || id.region || '';
             const year = id.year || '';
-            const srcPreview = (item.sources_summary || []).slice(0, 3).map(function(s) {
-                return escapeHtml(s.source) + (s.file_name ? ' · ' + escapeHtml(s.file_name) : '');
-            }).join('<br>') || '-';
+            // 来源预览：provider · 原始文件名 · 数量
+            const srcPreview = (item.sources_summary || []).slice(0, 5).map(function(s) {
+                const file = s.file_name || s.fileName || s.raw_file || '';
+                const cnt = (s.count_raw != null ? s.count_raw : (s.count_used != null ? s.count_used : ''));
+                return escapeHtml(s.provider || s.source || 'unknown')
+                    + (file ? ' · ' + escapeHtml(file) : '')
+                    + (cnt !== '' ? ' · ' + escapeHtml(String(cnt)) : '');
+            }).join('<br>') || '<span style="color:#c00">无来源明细</span>';
             return '<div class="episode-agg-card" data-key="' + escapeHtml(item.key) + '">'
                 + '<div class="episode-agg-main">'
                 + '<strong>' + escapeHtml(title) + '</strong> '
+                + '<span class="tag">' + escapeHtml(typeTag) + '</span> '
                 + (reg ? '<span class="tag">' + escapeHtml(reg) + '</span> ' : '')
                 + (year ? '<span class="tag">' + escapeHtml(String(year)) + '</span> ' : '')
-                + '<span class="tag">' + escapeHtml(se) + '</span>'
                 + '<div class="muted-text">' + escapeHtml(item.key) + '</div>'
                 + '<div class="episode-agg-metrics">'
                 + '<span>来源 ' + escapeHtml(item.source_count || 0) + '</span>'
@@ -62,35 +71,48 @@ function renderEpisodeAggregateResult(result) {
         : '<li>无</li>';
 
     const detailList = result.sources_detail || result.sources || [];
+    const ps = result.providerStats || result.provider_stats || {};
+    const ds = result.danmuStats || result.danmu_stats || {};
+    const isMovie = id.is_movie === true || id.type === 'movie' || String(result.key || '').includes(':movie');
     const sourcesHtml = detailList.length
         ? detailList.map(function(s) {
             const file = s.file_name || s.fileName || s.raw_file || '-';
             const matched = s.matched_title || s.anime_title || '-';
+            const original = s.original_title || id.original_title || '-';
             const cn = s.title || id.title || '-';
             const region = s.region_label || s.region || id.region_label || id.region || '-';
             const year = s.year || id.year || '-';
-            const se = 'S' + String(s.season || id.season || '?') + 'E' + String(s.episode || id.episode || '?');
+            const se = isMovie
+                ? '电影（无季集）'
+                : ('S' + String(s.season || id.season || '?') + 'E' + String(s.episode || id.episode || '?'));
+            const raw = s.count_raw ?? s.count ?? 0;
+            const used = s.count_used ?? '-';
             return '<div class="source-detail-card" style="border:1px solid #e0e0e0;border-radius:8px;padding:12px;margin:8px 0;">'
-                + '<div><strong>来源：</strong>' + escapeHtml(s.source || 'unknown') + '</div>'
+                + '<div><strong>来源 Provider：</strong>' + escapeHtml(s.provider || s.source || 'unknown') + '</div>'
                 + '<div><strong>原始弹幕文件：</strong><code>' + escapeHtml(file) + '</code></div>'
-                + '<div><strong>匹配信息：</strong></div>'
+                + '<div><strong>匹配 / 聚合关系：</strong></div>'
                 + '<ul style="margin:4px 0 0 16px;">'
                 + '<li>中文名：' + escapeHtml(cn) + '</li>'
-                + '<li>原始名：' + escapeHtml(matched) + '</li>'
+                + '<li>原始名：' + escapeHtml(original) + '</li>'
+                + '<li>原始匹配标题：' + escapeHtml(matched) + '</li>'
                 + '<li>地区：' + escapeHtml(String(region)) + '</li>'
                 + '<li>年份：' + escapeHtml(String(year)) + '</li>'
-                + '<li>季集：' + escapeHtml(se) + '</li>'
-                + '<li>数量：' + escapeHtml(String(s.count_raw ?? s.count ?? 0)) + '</li>'
+                + '<li>类型：' + escapeHtml(se) + '</li>'
+                + '<li>原始条数：' + escapeHtml(String(raw)) + '</li>'
+                + '<li>聚合采用：' + escapeHtml(String(used)) + '</li>'
+                + '<li>状态：' + escapeHtml(String(s.status || '-')) + '</li>'
+                + '<li>最终采用：' + (Number(used) > 0 ? '是' : '否') + '</li>'
+                + (s.match_reason ? '<li>匹配原因：' + escapeHtml(String(s.match_reason)) + '</li>' : '')
                 + (s.error ? '<li style="color:#c00;">错误：' + escapeHtml(s.error) + '</li>' : '')
                 + '</ul></div>';
         }).join('')
-        : '<p class="muted-text">无来源明细</p>';
+        : '<p class="muted-text" style="color:#c00">无来源明细（source metadata 缺失）</p>';
 
     const matchLine = result.display || id.display || [
         id.title || '',
         id.region_label || id.region || '',
         id.year || '',
-        'S' + (id.season || '?') + 'E' + (id.episode || '?')
+        isMovie ? '电影' : ('S' + (id.season || '?') + 'E' + (id.episode || '?'))
     ].filter(Boolean).join(' ');
 
     box.innerHTML = '<div class="processor-panel">'
@@ -101,6 +123,9 @@ function renderEpisodeAggregateResult(result) {
         + '<div class="stats-card"><span>来源数</span><strong>' + escapeHtml(detailList.length) + '</strong></div>'
         + '<div class="stats-card"><span>原始合计</span><strong>' + escapeHtml(result.stats?.total_before ?? result.total_before ?? 0) + '</strong></div>'
         + '<div class="stats-card"><span>合并后</span><strong>' + escapeHtml(result.count ?? result.stats?.total_after ?? result.total_after ?? 0) + '</strong></div>'
+        + '<div class="stats-card"><span>已查询平台</span><strong>' + escapeHtml(ps.searchedProviderCount ?? '-') + '</strong></div>'
+        + '<div class="stats-card"><span>可用/失败资源</span><strong>' + escapeHtml((ps.usableSourceCount ?? '-') + ' / ' + (ps.failedSourceCount ?? '-')) + '</strong></div>'
+        + '<div class="stats-card"><span>最终播放队列</span><strong>' + escapeHtml(ds.finalQueueCount ?? ps.finalDanmuCount ?? result.count ?? 0) + '</strong></div>'
         + '</div>'
         + '<h4>每个来源的原始弹幕文件</h4>'
         + sourcesHtml
@@ -129,6 +154,8 @@ async function showEpisodeAggregateDetail(encodedKey) {
                 removed_by_reason: d.removed_by_reason,
                 ...(d.stats || {})
             },
+            providerStats: d.providerStats || d.provider_stats,
+            danmuStats: d.danmuStats || d.danmu_stats,
             count: d.total_after,
             total_after: d.total_after
         });
@@ -186,8 +213,9 @@ async function refreshEpisodeAggregateCache(encodedKey) {
                 original_title: id.original_title || undefined,
                 region: id.region || undefined,
                 year: id.year || undefined,
-                season: id.season || 1,
-                episode: id.episode || 1
+                type: id.is_movie === true || id.type === 'movie' ? 'movie' : 'tv',
+                season: id.is_movie === true || id.type === 'movie' ? undefined : id.season,
+                episode: id.is_movie === true || id.type === 'movie' ? undefined : id.episode
             };
         }
     } catch (e) { /* ignore */ }
@@ -206,8 +234,14 @@ async function refreshEpisodeAggregateCache(encodedKey) {
         if (body.original_title) qs.set('original_title', body.original_title);
         if (body.region) qs.set('region', body.region);
         if (body.year) qs.set('year', body.year);
-        qs.set('season', String(body.season || 1));
-        qs.set('episode', String(body.episode || 1));
+        qs.set('type', body.type || 'tv');
+        if (body.type !== 'movie') {
+            if (!(Number(body.season) > 0) || !(Number(body.episode) > 0)) {
+                throw new Error('电视剧缓存缺少有效 season/episode，拒绝默认刷新 S01E01');
+            }
+            qs.set('season', String(body.season));
+            qs.set('episode', String(body.episode));
+        }
         qs.set('force', '1');
         qs.set('debug', '1');
         const response = await fetch(buildApiUrl('/api/forward/danmaku?' + qs.toString()));
@@ -222,6 +256,8 @@ async function refreshEpisodeAggregateCache(encodedKey) {
             display: result.media?.display,
             count: result.count,
             stats: result.meta?.stats || { total_after: result.count, total_before: result.meta?.stats?.total_before },
+            providerStats: result.meta?.providerStats,
+            danmuStats: result.meta?.danmuStats,
             sources: result.meta?.sources_detail || result.meta?.sources || result.sources_detail || [],
             sources_detail: result.meta?.sources_detail || result.meta?.sources || result.sources_detail || []
         });
