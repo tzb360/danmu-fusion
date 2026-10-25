@@ -9,6 +9,8 @@
 
 Telegram 频道：[@mkfx360](https://t.me/mkfx360)
 
+[![telegram](https://img.shields.io/badge/telegram-telegram__channel-0088cc?style=plastic)](https://t.me/mkfx360)
+
 ## 在线安装
 
 复制下面的 Raw 直链，在播放器的模块管理中选择「通过链接添加」或「通过 URL 导入」，粘贴后确认：
@@ -94,6 +96,8 @@ npm run test:all
 修改维护源码后请重新构建并运行完整测试。来源匹配和聚合规则应包含错误年份、跨季、不同剪辑、接口失败及历史选择路由的回归。
 
 ## 许可与致谢
+
+作者：[tzb360](https://github.com/tzb360) · Codex（AI 开发协作）。
 
 项目以 **AGPL-3.0-only** 开源，许可全文见 [LICENSE](./LICENSE)。本仓库基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api) 增量开发，保留上游许可与署名。
 
