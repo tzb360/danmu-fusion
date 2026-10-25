@@ -2,14 +2,13 @@
 
 [![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.0)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](./LICENSE)
+[![telegram](https://img.shields.io/badge/telegram-telegram__channel-0088cc?style=plastic)](https://t.me/mkfx360)
 
 为 Rex / Forward 兼容播放器提供的开源弹幕接入模块，支持同时配置 **1～3 个弹弹 Play 兼容 API**，完成搜索、选集和弹幕加载。
 
 **Danmu Fusion 是播放器模块，不是 danmu_api 服务端。** 模块需要连接另行部署的兼容 API，不附带公共接口、账号或密钥。仓库公开完整维护源码、独立构建脚本和测试，并保留基于 [danmu_api](https://github.com/huangxd-/danmu_api) 的历史后端源码与许可。
 
 Telegram 频道：[@mkfx360](https://t.me/mkfx360)
-
-[![telegram](https://img.shields.io/badge/telegram-telegram__channel-0088cc?style=plastic)](https://t.me/mkfx360)
 
 ## 在线安装
 
@@ -95,9 +94,14 @@ npm run test:all
 
 修改维护源码后请重新构建并运行完整测试。来源匹配和聚合规则应包含错误年份、跨季、不同剪辑、接口失败及历史选择路由的回归。
 
+### 贡献者
+
+- [tzb360](https://github.com/tzb360)：项目维护与开发。
+- Codex：AI 开发协作。
+
 ## 许可与致谢
 
-作者：[tzb360](https://github.com/tzb360) · Codex（AI 开发协作）。
+作者：[tzb360](https://github.com/tzb360)。
 
 项目以 **AGPL-3.0-only** 开源，许可全文见 [LICENSE](./LICENSE)。本仓库基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api) 增量开发，保留上游许可与署名。
 
