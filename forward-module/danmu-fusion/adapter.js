@@ -32,7 +32,7 @@ function compatLog(stage,code,message,status) {
   if(typeof console!=='undefined' && typeof console.log==='function')console.log('[Danmu Fusion]['+stage+']['+event.category+'] '+event.message);
 }
 function compatDiagnostics(){return JSON.parse(JSON.stringify(compatEvents));}
-function compatSummary(){return {version:'1.5.1',events:compatDiagnostics().filter(e=>!['OK','REQUEST','RESPONSE','HIT','READY','RETURN','COUNTS'].includes(e.code)).slice(-12)};}
+function compatSummary(){return {version:WidgetMetadata.version,events:compatDiagnostics().filter(e=>!['OK','REQUEST','RESPONSE','HIT','READY','RETURN','COUNTS'].includes(e.code)).slice(-12)};}
 function compatEmpty(error){
   const safe=error && compatSafeErrors.has(error),code=safe?error.code:'RUNTIME_ERROR',status=safe?error.status:undefined;
   return {comments:[],count:0,success:false,error:{code:code,category:compatCategory(code,status)},message:compatMessage(code,status) || '弹幕加载异常，请向开发者反馈诊断摘要',diagnostics:compatSummary()};

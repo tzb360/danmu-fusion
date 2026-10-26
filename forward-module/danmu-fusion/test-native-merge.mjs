@@ -17,7 +17,7 @@ for(const item of cases){const start=Date.now();const result={...item,status:'fa
   const p={...item,seriesName:item.title,danmu_api_url:api};
   const search=await app.invoke('searchDanmu',p),candidate=search.animes.find(a=>a.mergedChildren?.length);
   assert.ok(candidate,'no native merged candidate');
-  result.mergedTitle=candidate.animeTitle;result.candidateSources=[...new Set([candidate.source,...candidate.mergedChildren.map(c=>c.source)])];
+  result.mergedTitle=candidate.animeTitle;result.candidateSources=[...new Set([(candidate.originalSource || candidate.source),...candidate.mergedChildren.map(c=>c.source)])];
   result.children=candidate.mergedChildren.map(c=>c.animeTitle);
   assert.ok(result.children.every(t=>!/纪录|解说|赏析|影评|预告|花絮/.test(t)));
   const detail=await app.invoke('getDetail',{...p,animeId:candidate.animeId}),selected=selectEpisode(detail,item);assert.ok(selected);

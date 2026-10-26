@@ -22,7 +22,7 @@ function standardApi(options={}) {
 test('settings expose exactly three API addresses, including all module-level params',()=>{
   const app=runtime(standardApi()), meta=app.WidgetMetadata;
   assert.equal(meta.id,'tzb360.danmu.fusion');
-  assert.equal(meta.version,'1.5.1');
+  assert.equal(meta.version,'1.5.2');
   assert.equal(meta.globalParams.length,3);
   assert.equal(meta.globalParams[0].name,'danmu_api_url');
   assert.equal(meta.globalParams[0].title,'弹幕 API 1（主要接口）');

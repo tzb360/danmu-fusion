@@ -29,7 +29,7 @@ test('public metadata exposes three address inputs and preserves upgrade key and
   assert.deepEqual(Array.from(app.metadata.globalParams,p=>p.name),['danmu_api_url','danmu_api_url_2','danmu_api_url_3']);
   assert.ok(app.metadata.globalParams.every(p=>p.type==='input'));
   assert.ok(app.metadata.modules.every(m=>m.params.length===0 && m.cacheDuration===0));
-  assert.equal(app.metadata.version,'1.5.1');assert.equal(app.metadata.id,'tzb360.danmu.fusion');
+  assert.equal(app.metadata.version,'1.5.2');assert.equal(app.metadata.id,'tzb360.danmu.fusion');
   for(const key of ['setTimeout','fetch','URL','AbortController','Buffer','process'])assert.equal(app.sandbox[key],undefined);
 });
 test('one API, empty optional slots and legacy server alias retain real IDs and comment-only playback',async()=>{

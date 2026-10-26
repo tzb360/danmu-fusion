@@ -1,0 +1,120 @@
+{
+  "startedAt": "2026-10-26T06:09:10.627Z",
+  "cases": [
+    {
+      "title": "爱情公寓4",
+      "type": "tv",
+      "year": 2014,
+      "season": 4,
+      "episode": 7,
+      "status": "passed",
+      "mergedTitle": "【聚合】爱情公寓4(2014)【国产剧】from tencent&iqiyi&iqiyi&aiyifan",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "children": [
+        "爱情公寓4(2014)【国产剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from aiyifan"
+      ],
+      "episodes": 24,
+      "selectedEpisode": "【聚合】【qq&qiyi&qiyi&aiyifan】 爱情公寓4 第7集",
+      "count": 59949,
+      "sourceTags": {
+        "[tencent]": 42669,
+        "[iqiyi]": 17154,
+        "[aiyifan]": 112,
+        "[tencent＆iqiyi]": 13,
+        "[iqiyi＆aiyifan]": 1
+      },
+      "actualSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "seekCount": 1175,
+      "elapsedMs": 77033
+    },
+    {
+      "title": "哪吒之魔童降世",
+      "type": "movie",
+      "year": 2019,
+      "status": "passed",
+      "mergedTitle": "【聚合】哪吒之魔童降世(2019)【动画电影】from tencent&iqiyi&youku&aiyifan",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "youku",
+        "aiyifan"
+      ],
+      "children": [
+        "哪吒之魔童降世(2019)【动画电影】from iqiyi",
+        "哪吒之魔童降世(2019)【动画电影】from youku",
+        "哪吒之魔童降世(2019)【电影】from aiyifan"
+      ],
+      "episodes": 1,
+      "selectedEpisode": "【聚合】【qq&qiyi&youku&aiyifan】 哪吒之魔童降世",
+      "count": 177330,
+      "sourceTags": {
+        "[aiyifan]": 5376,
+        "[tencent]": 131215,
+        "[iqiyi]": 40640,
+        "[tencent＆aiyifan]": 61,
+        "[tencent＆iqiyi]": 36,
+        "[iqiyi＆aiyifan]": 2
+      },
+      "actualSources": [
+        "aiyifan",
+        "tencent",
+        "iqiyi"
+      ],
+      "seekCount": 1634,
+      "elapsedMs": 90592
+    },
+    {
+      "title": "长安三万里",
+      "type": "movie",
+      "year": 2023,
+      "status": "passed",
+      "mergedTitle": "【聚合】长安三万里(2023)【动画电影】from tencent&iqiyi&youku&aiyifan",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "youku",
+        "aiyifan"
+      ],
+      "children": [
+        "长安三万里(2023)【动画电影】from iqiyi",
+        "长安三万里(2023)【动画电影】from youku",
+        "长安三万里(2023)【电影】from aiyifan"
+      ],
+      "episodes": 1,
+      "selectedEpisode": "【聚合】【qq&qiyi&youku&aiyifan】 长安三万里",
+      "count": 261217,
+      "sourceTags": {
+        "[tencent]": 194919,
+        "[aiyifan]": 4007,
+        "[iqiyi]": 62153,
+        "[tencent＆iqiyi]": 113,
+        "[tencent＆aiyifan]": 22,
+        "[iqiyi＆aiyifan]": 3
+      },
+      "actualSources": [
+        "tencent",
+        "aiyifan",
+        "iqiyi"
+      ],
+      "seekCount": 1597,
+      "elapsedMs": 64372
+    }
+  ],
+  "version": "1.5.2",
+  "finishedAt": "2026-10-26T06:13:02.691Z",
+  "totals": {
+    "cases": 3,
+    "passed": 3,
+    "failed": 0
+  }
+}

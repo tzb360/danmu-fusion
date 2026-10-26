@@ -2,7 +2,7 @@
  * Danmu Fusion · 弹幕融合
  * Forward 专用弹幕聚合播放模块
  *
- * 版本：1.5.1
+ * 版本：1.5.2
  *
  * 架构（电影 / 电视剧完全分离）：
  *
@@ -20,7 +20,7 @@
 var WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.5.1",
+  version: "1.5.2",
   requiredVersion: "0.0.2",
   description:
     "支持 1～3 个弹幕 API，独立选源与安全聚合，保留服务端原生聚合。",
@@ -67,7 +67,7 @@ var WidgetMetadata = {
 };
 
 // ---------------------------------------------------------------------------
-const FUSION_UA = "DanmuFusion/1.5.1 (tzb360; Forward)";
+const FUSION_UA = "DanmuFusion/1.5.2 (tzb360; Forward)";
 function toInt(v, fb) {
   if (v === undefined || v === null || v === "") return fb;
   // 支持 "E11" / "S04" / "第11集"
@@ -1778,7 +1778,7 @@ function compatLog(stage,code,message,status) {
   if(typeof console!=='undefined' && typeof console.log==='function')console.log('[Danmu Fusion]['+stage+']['+event.category+'] '+event.message);
 }
 function compatDiagnostics(){return JSON.parse(JSON.stringify(compatEvents));}
-function compatSummary(){return {version:'1.5.1',events:compatDiagnostics().filter(e=>!['OK','REQUEST','RESPONSE','HIT','READY','RETURN','COUNTS'].includes(e.code)).slice(-12)};}
+function compatSummary(){return {version:WidgetMetadata.version,events:compatDiagnostics().filter(e=>!['OK','REQUEST','RESPONSE','HIT','READY','RETURN','COUNTS'].includes(e.code)).slice(-12)};}
 function compatEmpty(error){
   const safe=error && compatSafeErrors.has(error),code=safe?error.code:'RUNTIME_ERROR',status=safe?error.status:undefined;
   return {comments:[],count:0,success:false,error:{code:code,category:compatCategory(code,status)},message:compatMessage(code,status) || '弹幕加载异常，请向开发者反馈诊断摘要',diagnostics:compatSummary()};
@@ -2328,7 +2328,50 @@ async function multiJob(cfg,key,loader){
   const task=(async()=>{try{const value=await loader();if(value && (Array.isArray(value.animes)?value.animes.length:Array.isArray(value.episodes)&&value.episodes.length))compatSave(cacheKey,value);return value;}finally{multiJobs.delete(jobKey);}})();
   multiJobs.set(jobKey,task);return task;
 }
-function multiNative(candidate){return Array.isArray(candidate.mergedChildren)&&candidate.mergedChildren.length || /\bfrom\s+[a-z0-9_-]+&/i.test(candidate.animeTitle || '')?1:0;}
+function multiNative(candidate){return Array.isArray(candidate.mergedChildren)&&candidate.mergedChildren.length || /\bfrom\s+[a-z0-9_-]+&[a-z0-9_-]+/i.test(candidate.animeTitle || '')?1:0;}
+function multiNativeEpisode(episode){
+  const tag=String(episode.episodeTitle || '').match(/^\s*(?:【([^】]+)】|\[([^\]]+)\])/);
+  const value=tag && (tag[1] || tag[2]);
+  if(!value || !/^[a-z0-9_-]+(?:[&＆][a-z0-9_-]+)+$/i.test(value))return false;
+  return new Set(value.split(/[&＆]/).map(fusionSource)).size>1;
+}
+function multiAggregateDisplay(value,field){
+  const copy=Object.assign({},value,{source:'聚合'});
+  if(value.source && value.source!=='聚合')copy.originalSource=value.source;
+  const title=String(value[field] || '');copy[field]=/^【聚合】/.test(title)?title:'【聚合】'+title;
+  return copy;
+}
+// Reuse only unexpired, source-bound native candidates already stored by the
+// stable adapter. This keeps late native aggregation discoverable across VMs;
+// no new cache, background task, timer or provider allowlist is introduced.
+async function multiNativeHints(sources,params){
+  const records=new Map();
+  for(const [key,record] of compatLookups)records.set('fusion-compat-v1:lookup:'+key,record);
+  try{
+    if(typeof Widget!=='undefined' && Widget.storage){
+      const text=await Widget.storage.get('fusion-compat-v1:lookup-index');
+      const index=typeof text==='string' && text.length<5000?JSON.parse(text):[];
+      if(Array.isArray(index))for(const key of index.slice(-32)){
+        if(typeof key!=='string' || !/^fusion-compat-v1:lookup:[a-f0-9]{64}$/.test(key) || records.has(key))continue;
+        const value=await Widget.storage.get(key);
+        if(typeof value==='string' && value.length<=200000){try{records.set(key,JSON.parse(value));}catch(e){}}
+      }
+    }
+  }catch(e){compatLog('Cache','NATIVE_HINT_UNAVAILABLE','Optional native candidate lookup unavailable');}
+  const result=[];
+  for(const [key,record] of records){
+    const candidate=record && record.candidate;
+    if(!record || !(record.expires>Date.now()) || !candidate || !multiRawId(candidate.animeId) || !multiNative(candidate))continue;
+    const cfg=sources.find(c=>key==='fusion-compat-v1:lookup:'+compatKey(c,candidate.animeId));
+    if(!cfg || !multiEvidence(candidate,params) || !compatRank([candidate],params).length)continue;
+    // Explicit playback versions/languages must not inherit an unknown or
+    // conflicting cached edition, even though independent manual search works.
+    if(multiEdition(params) && multiEdition(params)!==multiEdition(candidate) || multiLanguage(params) && multiLanguage(params)!==multiLanguage(candidate))continue;
+    result.push({s:cfg.s,candidate:candidate});
+    if(result.length>=32)break;
+  }
+  return result;
+}
 function multiEvidence(candidate,params){
   const identity=fusionIdentity(params),pair=fusionSeasonCandidate(identity,fusionCandidate(candidate)),c=pair.candidate;
   const title=identity.isMovie?fusionTitle(candidate.animeTitle):fusionSeriesName(candidate.animeTitle,c.season);
@@ -2350,11 +2393,22 @@ async function fusionMultiSearch(params){
     if(sources.length===1 && sources[0].slot===1){
       const result=await fusionCompatSearch(multiParams(params,sources[0]));
       if(result.animes.length)await multiBare(sources,'a',result.animes.slice(0,32).map(c=>c.animeId),true);
-      return result;
+      return Object.assign({},result,{animes:result.animes.map(c=>multiNative(c)?multiAggregateDisplay(c,'animeTitle'):c)});
     }
-    const query=fusionDigest(JSON.stringify([fusionIdentity(params),params.title,params.keyword,params.seriesName])),batch=await multiFirst(sources.map(cfg=>multiJob(cfg,'search:'+query,async()=>{
+    const query=fusionDigest(JSON.stringify([fusionIdentity(params),params.title,params.keyword,params.seriesName]));
+    const pending=multiFirst(sources.map(cfg=>multiJob(cfg,'search:'+query,async()=>{
       const result=await fusionCompatSearch(multiParams(params,cfg));return {s:cfg.s,animes:result.animes.slice(0,32)};
     })),v=>v.animes.length>0);
+    const [batch,hints]=await Promise.all([pending,multiNativeHints(sources,params)]);
+    // A completed fresh response is authoritative, including a valid empty one.
+    // Hints fill only APIs absent from this first batch, never override it.
+    let reused=0;
+    for(const cfg of sources){
+      if(batch.values.some(v=>v.s===cfg.s))continue;
+      const animes=hints.filter(h=>h.s===cfg.s).map(h=>h.candidate);
+      if(animes.length){batch.values.push({s:cfg.s,animes:animes});reused+=animes.length;}
+    }
+    if(reused)compatLog('Cache','NATIVE_REUSED','Verified recent native candidates reused: '+reused);
     const entries=[];
     for(const cfg of sources){
       const result=batch.values.find(v=>v.s===cfg.s);if(!result)continue;
@@ -2369,7 +2423,8 @@ async function fusionMultiSearch(params){
       const ref=multiRef(v.cfg,v.c,v.e),alternatives=entries.filter(a=>a.cfg.s!==v.cfg.s && multiSameWork(v.e,a.e));
       ref.a=alternatives.filter((a,i)=>alternatives.findIndex(b=>b.cfg.s===a.cfg.s)===i).slice(0,2).map(a=>multiRef(a.cfg,a.c,a.e));
       const id=multiId('a',[ref]),preferred=preferenceMatches(preferences,v.e,v.cfg.s);
-      return Object.assign({},v.c,{animeId:id,bangumiId:id,isFavorited:preferred || v.c.isFavorited,animeTitle:(preferred?'上次来源 · ':'')+v.c.animeTitle+' · API '+v.cfg.slot});
+      const display=multiNative(v.c)?multiAggregateDisplay(v.c,'animeTitle'):v.c;
+      return Object.assign({},display,{animeId:id,bangumiId:id,isFavorited:preferred || v.c.isFavorited,animeTitle:(preferred?'上次来源 · ':'')+display.animeTitle+' · API '+v.cfg.slot});
     });
     // One best (preferably native merged) candidate from each API per identity.
     // Details decide whether episodes actually have sufficient timeline proof.
@@ -2383,7 +2438,7 @@ async function fusionMultiSearch(params){
       }
       if(members.length<2)continue;groups++;
       const id=multiId('a',members.map(v=>multiRef(v.cfg,v.c,v.e)));
-      animes.unshift(Object.assign({},root.c,{animeId:id,bangumiId:id,animeTitle:root.c.animeTitle+' · 跨 API 选源（'+members.map(v=>v.cfg.slot).join('+')+'）'}));
+      animes.unshift(Object.assign({},root.c,{animeId:id,bangumiId:id,source:'跨 API 选源',originalSource:root.c.source,animeTitle:root.c.animeTitle+' · 跨 API 选源（'+members.map(v=>v.cfg.slot).join('+')+'）'}));
     }
     animes.sort((a,b)=>Number(!!b.isFavorited)-Number(!!a.isFavorited));
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Search APIs available: '+batch.values.filter(v=>v.animes.length).length+'; candidates: '+animes.length+(batch.partial?'; slow peers continue in bounded cache':''));
@@ -2434,7 +2489,7 @@ async function fusionMultiDetail(params){
       if(compatPresent(params.animeId))await multiBare(sources,'a',params.animeId,false);
       const episodes=await fusionCompatDetail(multiParams(params,sources[0]));
       if(episodes.length)await multiBare(sources,'c',episodes.slice(0,2000).map(e=>e.episodeId),true);
-      return episodes;
+      return episodes.map(e=>multiNativeEpisode(e)?multiAggregateDisplay(e,'episodeTitle'):e);
     }
     const requested=refs.slice();
     if(refs.length===1 && refs[0].a)for(const alt of refs[0].a)if(multiSameWork(refs[0].e,alt.e))requested.push(alt);
@@ -2468,7 +2523,8 @@ async function fusionMultiDetail(params){
       if(bucket && bucket.counts.get(v.cfg.s)===1){
         ref.a=bucket.members.filter(a=>a.cfg.s!==v.cfg.s && bucket.counts.get(a.cfg.s)===1 && multiSameEpisode(v.proof,a.proof)).slice(0,2).map(a=>({s:a.cfg.s,i:a.e.episodeId,p:a.proof}));
       }
-      return Object.assign({},v.e,{episodeId:multiId('c',[ref]),episodeTitle:v.e.episodeTitle+' · API '+v.cfg.slot});
+      const display=multiNativeEpisode(v.e)?multiAggregateDisplay(v.e,'episodeTitle'):v.e;
+      return Object.assign({},display,{episodeId:multiId('c',[ref]),episodeTitle:display.episodeTitle+' · API '+v.cfg.slot});
     });
     const used=new Set();
     for(let i=0;refs.length>1 && i<entries.length;i++){
@@ -2478,7 +2534,7 @@ async function fusionMultiDetail(params){
         members.push(v);used.add(j);
       }
       if(members.length<2)continue;
-      episodes.unshift(Object.assign({},root.e,{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof}))),episodeTitle:root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
+      episodes.unshift(Object.assign({},multiAggregateDisplay(root.e,'episodeTitle'),{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof}))),episodeTitle:'【聚合】'+root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
     }
     if(refs.length>1 && !episodes.some(e=>e.episodeTitle.includes('安全聚合')))compatLog('Route','UNPROVEN_TIMELINE','Choose independent source');
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Returning routed episodes: '+episodes.length);

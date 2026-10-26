@@ -10,7 +10,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {nativeRuntime,media} from './native-test-support.mjs';
 const scenarios=['cacheable-seeks','large-track','concurrent-seeks','continuous-episodes'];
-const versions=['1.5.0','1.5.1'];
+const versions=['1.5.0',nativeRuntime(()=>({data:{}})).metadata.version];
 if(process.argv.includes('--worker')){
   const [version,scenario]=process.argv.slice(-2),large=scenario==='large-track',count=large?220001:4000;
   const rows=Array.from({length:count},(_,i)=>({cid:i,p:(i/50)+',5,16711680,u',m:'弹幕'+i})),payload=JSON.stringify({comments:rows});

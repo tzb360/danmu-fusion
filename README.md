@@ -1,6 +1,6 @@
 # Danmu Fusion · 弹幕融合
 
-[![Version](https://img.shields.io/badge/version-1.5.1-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.1)
+[![Version](https://img.shields.io/badge/version-1.5.2-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.2)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](./LICENSE)
 [![telegram](https://img.shields.io/badge/telegram-telegram__channel-0088cc?style=plastic)](https://t.me/mkfx360)
 
@@ -19,8 +19,8 @@ https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-
 ```
 
 - [安装索引 widget.fwd](https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-fusion/widget.fwd)
-- [1.5.1 固定版本直链](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.5.1/forward-module/danmu-fusion/danmu-fusion.js)
-- [发布页与完整源码包](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.1)
+- [1.5.2 固定版本直链](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.5.2/forward-module/danmu-fusion/danmu-fusion.js)
+- [发布页与完整源码包](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.2)
 
 安装后填写「弹幕 API 1（主要接口）」。需要时再填写 API 2、API 3；每框一个地址，可留空，不要用换行输入多个地址。
 
@@ -32,7 +32,15 @@ https://example.com/proxy/api/v2?token=your%2Fencoded%2Btoken
 
 模块 ID 保持 `tzb360.danmu.fusion`。API 1 沿用 `danmu_api_url`，API 2/3 分别使用 `danmu_api_url_2`、`danmu_api_url_3`。从旧版升级时原 API 1 配置继续有效。
 
-## 1.5.1 更新
+## 1.5.2 聚合入口修复
+
+- 服务端原生聚合和已验证的跨 API 聚合明确显示「聚合」，保留服务器返回的平台组合；单源及尚未验证的跨 API 选源分别标识。
+- 复用既有有界、未过期、绑定地址指纹的原生聚合候选，减少快接口先返回后，慢接口聚合入口在新运行时中不可见的情况。只复用候选元数据，评论仍按真实 ID 加载。
+- 不固定任何平台组合，不更改服务器启用的平台、聚合规则或原始弹幕。详情和实际评论仍需分别验证。
+
+[1.5.2 实际 Rex / AWS 聚合验证与修复报告](./forward-module/danmu-fusion/TEST_REPORT_1.5.2.md)
+
+## 1.5.1 功能
 
 - **记住常用来源**：为某部剧选好来源并成功加载后，同作品后续集数优先推荐该 API；电影同样支持。换季、年份、版本、身份或接口凭据变化后重新验证。
 - **看懂加载问题**：地址错误、认证失败、接口不存在、服务器故障、网络与超时等分别给出简体中文诊断，反馈时无需附带私人地址或 Token。
@@ -68,7 +76,7 @@ https://example.com/proxy/api/v2?token=your%2Fencoded%2Btoken
 ```sh
 git clone https://github.com/tzb360/danmu-fusion.git
 cd danmu-fusion
-git checkout v1.5.1
+git checkout v1.5.2
 npm ci
 npm run build:forward-fusion
 node scripts/build-danmu-fusion.mjs --check

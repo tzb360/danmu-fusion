@@ -21,7 +21,7 @@ for(const stage of [1,2,3,4,5,6])test('Forward timer-free baseline stays usable 
 
 test('metadata registrations invoke real globals, one setting, established identity',()=>{
   const app=nativeRuntime(standardFixture());
-  assert.equal(app.metadata.id,'tzb360.danmu.fusion');assert.equal(app.metadata.version,'1.5.1');
+  assert.equal(app.metadata.id,'tzb360.danmu.fusion');assert.equal(app.metadata.version,'1.5.2');
   assert.equal(app.metadata.requiredVersion,'0.0.2');
   assert.equal(app.metadata.globalParams.length,3);assert.equal(app.metadata.globalParams[0].name,'danmu_api_url');
   for(const id of ['searchDanmu','getDetail','getComments','getDanmuWithSegmentTime']){
