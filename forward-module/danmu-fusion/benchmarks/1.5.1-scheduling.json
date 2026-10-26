@@ -1,0 +1,54 @@
+[
+  {
+    "name": "1.4.5 single",
+    "mock": true,
+    "samplesMs": [
+      29.4,
+      28.7,
+      27.83,
+      27.13,
+      28.55
+    ],
+    "meanFirstResultMs": 28.32,
+    "requests": 1
+  },
+  {
+    "name": "1.5.1 single",
+    "mock": true,
+    "samplesMs": [
+      34.61,
+      27.55,
+      28.91,
+      27.75,
+      28.22
+    ],
+    "meanFirstResultMs": 29.41,
+    "requests": 1
+  },
+  {
+    "name": "1.5.1 two",
+    "mock": true,
+    "samplesMs": [
+      32.96,
+      28.82,
+      31.02,
+      28.51,
+      29.64
+    ],
+    "meanFirstResultMs": 30.19,
+    "requests": 2
+  },
+  {
+    "name": "1.5.1 three",
+    "mock": true,
+    "samplesMs": [
+      29.89,
+      31.06,
+      30.62,
+      30.98,
+      35.16
+    ],
+    "meanFirstResultMs": 31.54,
+    "requests": 3
+  }
+]

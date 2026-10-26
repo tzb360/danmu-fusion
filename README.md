@@ -1,6 +1,6 @@
 # Danmu Fusion · 弹幕融合
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.0)
+[![Version](https://img.shields.io/badge/version-1.5.1-blue)](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.1)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green)](./LICENSE)
 [![telegram](https://img.shields.io/badge/telegram-telegram__channel-0088cc?style=plastic)](https://t.me/mkfx360)
 
@@ -19,8 +19,8 @@ https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-
 ```
 
 - [安装索引 widget.fwd](https://raw.githubusercontent.com/tzb360/danmu-fusion/main/forward-module/danmu-fusion/widget.fwd)
-- [1.5.0 固定版本直链](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.5.0/forward-module/danmu-fusion/danmu-fusion.js)
-- [发布页与完整源码包](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.0)
+- [1.5.1 固定版本直链](https://raw.githubusercontent.com/tzb360/danmu-fusion/v1.5.1/forward-module/danmu-fusion/danmu-fusion.js)
+- [发布页与完整源码包](https://github.com/tzb360/danmu-fusion/releases/tag/v1.5.1)
 
 安装后填写「弹幕 API 1（主要接口）」。需要时再填写 API 2、API 3；每框一个地址，可留空，不要用换行输入多个地址。
 
@@ -32,7 +32,14 @@ https://example.com/proxy/api/v2?token=your%2Fencoded%2Btoken
 
 模块 ID 保持 `tzb360.danmu.fusion`。API 1 沿用 `danmu_api_url`，API 2/3 分别使用 `danmu_api_url_2`、`danmu_api_url_3`。从旧版升级时原 API 1 配置继续有效。
 
-## 1.5.0 功能
+## 1.5.1 更新
+
+- **记住常用来源**：为某部剧选好来源并成功加载后，同作品后续集数优先推荐该 API；电影同样支持。换季、年份、版本、身份或接口凭据变化后重新验证。
+- **看懂加载问题**：地址错误、认证失败、接口不存在、服务器故障、网络与超时等分别给出简体中文诊断，反馈时无需附带私人地址或 Token。
+- **有证据才切换备用**：当前来源不可用时，只尝试已验证同作品、同集、同片长和同视频版本的备用来源，并保留原始错误；缺少证据仍可独立选源。
+- **减少加载与拖动开销**：合并重复加载和解析，为可缓存轨道建立分钟索引；超大轨道跳过缓存，完整条数、原始内容和时间轴保持不变。
+
+兼容功能继续保留：
 
 - **多 API 独立选源**：最多三个接口独立规范化、去重和并发搜索。单个接口失败不清空健康来源的结果。
 - **优先展示有效结果**：首次搜索不等待仍在冷查询的慢接口；稍后完成的数据可在后续搜索中补充。播放器自身的列表缓存可能影响刷新。
@@ -61,7 +68,7 @@ https://example.com/proxy/api/v2?token=your%2Fencoded%2Btoken
 ```sh
 git clone https://github.com/tzb360/danmu-fusion.git
 cd danmu-fusion
-git checkout v1.5.0
+git checkout v1.5.1
 npm ci
 npm run build:forward-fusion
 node scripts/build-danmu-fusion.mjs --check
@@ -74,19 +81,22 @@ npm run test:all
 | --- | --- |
 | `forward-module/danmu-fusion/danmu-fusion.js` | 可导入成品，含身份解析入口及生成区块 |
 | `forward-module/danmu-fusion/adapter.js` | 标准协议、搜索、年份复核、详情和评论 |
+| `forward-module/danmu-fusion/preferences.js` | 有界、按作品隔离的来源推荐记忆 |
 | `forward-module/danmu-fusion/multi-api.js` | 多 API 管理、来源路由及安全聚合 |
 | `forward-module/danmu-fusion/transport.js` | 保留引擎的 HTTP、缓存和分片逻辑 |
 | `danmu_api/aggregation/forward-core.js` | 身份匹配和去重核心 |
 | `danmu_api/utils/zh-util.js` | 上游中文简繁转换工具 |
 | `scripts/build-danmu-fusion.mjs` | 独立构建及一致性检查 |
-| `forward-module/danmu-fusion/*.test.mjs` | 模块测试，含 34 项多 API 回归 |
-| `forward-module/danmu-fusion/fixtures/` | 基准实验使用的 1.4.5 公开构建 |
+| `forward-module/danmu-fusion/*.test.mjs` | 模块测试，含 34 项多 API 和 18 项 1.5.1 回归 |
+| `forward-module/danmu-fusion/fixtures/` | 基准实验使用的 1.4.5 / 1.5.0 公开构建 |
+
+1.5.1 对照 1.5.0 的可重复性能实验：`npm run benchmark:forward`，含耗时、请求次数及资源采样；结果和局限见 [测试报告](./forward-module/danmu-fusion/TEST_REPORT_1.5.1.md)。
 
 可单独执行 `npm run test:forward-native`、`npm run test:forward-multi`。性能比较脚本为 `node forward-module/danmu-fusion/benchmark-multi.mjs`，使用 Mock 延迟，不代表公网或设备性能。
 
 真实接口测试使用 `DANMU_API_URL`、`DANMU_API_URL_2`、`DANMU_API_URL_3` 环境变量，再运行 `npm run test:forward-multi-live`。不要将实际地址、Token、Cookie 或个人播放记录提交到仓库。第三方参考模块不随项目分发，可通过 `DANMU_REFERENCE_REX`、`DANMU_REFERENCE_MAKKA`、`DANMU_REFERENCE_UNIVERSAL` 指定本地文件作可选对照。
 
-验证范围与复现方式见 [1.5.0 测试说明](./forward-module/danmu-fusion/MULTI_API_TEST_REPORT_1.5.0.md)。后端历史接口与自建部署见 [服务端参考](./README-upstream.md)、[DEPLOYMENT](./DEPLOYMENT.md) 和 [严格原生聚合配置](./forward-module/danmu-fusion/SERVER_NATIVE_MERGE.md)。
+验证范围与复现方式见 [1.5.1 测试说明](./forward-module/danmu-fusion/TEST_REPORT_1.5.1.md)。后端历史接口与自建部署见 [服务端参考](./README-upstream.md)、[DEPLOYMENT](./DEPLOYMENT.md) 和 [严格原生聚合配置](./forward-module/danmu-fusion/SERVER_NATIVE_MERGE.md)。
 
 ## 反馈与贡献
 

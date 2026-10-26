@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import {nativeRuntime,selectEpisode} from './native-test-support.mjs';
 const urls=[process.env.DANMU_API_URL,process.env.DANMU_API_URL_2,process.env.DANMU_API_URL_3].filter(Boolean);
 if(!urls.length)throw Error('Set DANMU_API_URL');
-const report={version:'1.5.0',startedAt:new Date().toISOString(),kind:'real configured APIs, no mocks',cases:[]};
+const report={version:'1.5.1',startedAt:new Date().toISOString(),kind:'real configured APIs, no mocks',cases:[]};
 const item={title:'爱情公寓4',seriesName:'爱情公寓4',type:'tv',year:2014,season:4,episode:2};
 const save=()=>{if(process.env.DANMU_MULTI_REPORT)fs.writeFileSync(process.env.DANMU_MULTI_REPORT,JSON.stringify(report,null,2)+'\n');};
 const counts=process.env.DANMU_MULTI_COUNTS?process.env.DANMU_MULTI_COUNTS.split(',').map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=urls.length):urls.map((_,i)=>i+1);

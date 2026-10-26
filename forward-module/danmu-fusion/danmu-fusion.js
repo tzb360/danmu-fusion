@@ -2,7 +2,7 @@
  * Danmu Fusion · 弹幕融合
  * Forward 专用弹幕聚合播放模块
  *
- * 版本：1.5.0
+ * 版本：1.5.1
  *
  * 架构（电影 / 电视剧完全分离）：
  *
@@ -20,7 +20,7 @@
 var WidgetMetadata = {
   id: "tzb360.danmu.fusion",
   title: "Danmu Fusion",
-  version: "1.5.0",
+  version: "1.5.1",
   requiredVersion: "0.0.2",
   description:
     "支持 1～3 个弹幕 API，独立选源与安全聚合，保留服务端原生聚合。",
@@ -67,7 +67,7 @@ var WidgetMetadata = {
 };
 
 // ---------------------------------------------------------------------------
-const FUSION_UA = "DanmuFusion/1.5.0 (tzb360; Forward)";
+const FUSION_UA = "DanmuFusion/1.5.1 (tzb360; Forward)";
 function toInt(v, fb) {
   if (v === undefined || v === null || v === "") return fb;
   // 支持 "E11" / "S04" / "第11集"
@@ -1756,27 +1756,46 @@ const compatLookups=new Map();
 const compatResponses=new Map();
 const compatPending=new Map();
 const compatYearMatches=new Map();
+const compatSafeErrors=new WeakSet();
+const compatCommentJobs=new Map();
+const compatValidated=new WeakSet();
+const compatWindows=new WeakMap();
+const compatCounters={validations:0,records:0};
 const compatMatchUnsupported=new Set();
 let compatStorageQueue=Promise.resolve();
 
-function compatLog(stage,code,message) {
-  const event={stage:stage,code:code,message:message};
+function compatMessage(code,status){
+  if(code==='HTTP_STATUS')return status===401 || status===403?'接口认证失败，请检查地址中的凭据或访问权限':status===404?'接口地址不存在，请检查服务器根地址':status>=500?'弹幕服务器暂时故障，请稍后重试':'接口拒绝了请求，请检查服务端兼容性';
+  const messages={INVALID_ADDRESS:'API 地址格式错误，请填写 HTTP(S) 服务器根地址或以 /api/v2 结尾的地址',NO_API:'请先填写有效的弹幕 API 地址',TIMEOUT:'弹幕请求超时，请稍后重试或手动选择其他来源',NETWORK:'无法连接弹幕服务器，请检查网络后重试',NO_RESULTS:'没有找到匹配作品，可尝试手动搜索其他片名',NO_COMMENTS:'当前剧集暂无弹幕，可手动选择其他来源',SOURCE_CHANGED:'已选来源的地址或凭据已变化，请重新搜索并选择',PREFERENCE_EXPIRED:'来源记忆已失效，将重新验证并推荐',UNPROVEN_TIMELINE:'缺少同集、片长或视频版本证据，请独立选择来源',TIMELINE_CHANGED:'弹幕视频版本已变化，已停止自动使用该来源，请重新选源',FALLBACK_USED:'原来源不可用，已切换至验证过的同集同版本备用来源',FALLBACK_FAILED:'原来源和已验证备用来源均不可用，请手动重新选源',BUSY:'当前请求较多，请稍后重试',PENDING_TASK:'服务器正在准备弹幕，请稍后重试',INVALID_SELECTION:'历史选择无效，请重新搜索',AMBIGUOUS_LEGACY_ID:'旧选择未绑定来源，请重新搜索并选择',TOO_LARGE:'弹幕响应超过容量限制，请独立选择其他来源',TOO_MANY_COMMENTS:'弹幕条数超过容量限制，请独立选择其他来源',MERGE_CAPACITY:'合并轨道超过容量限制，已返回一条完整来源'};
+  return messages[code] || (/^INVALID_|^MISSING_|EMPTY_RESPONSE|API_ERROR/.test(code)?'弹幕接口返回格式异常或缺少必要数据，请向开发者反馈诊断摘要':null);
+}
+function compatCategory(code,status){return code==='HTTP_STATUS'?(status===401 || status===403?'AUTH':status===404?'NOT_FOUND':status>=500?'SERVER':'HTTP'):code;}
+function compatLog(stage,code,message,status) {
+  const event={stage:stage,code:code,category:compatCategory(code,status),message:compatMessage(code,status) || message};
+  if(Number.isInteger(status))event.status=status;
   compatEvents.push(event);if(compatEvents.length>64)compatEvents.shift();
-  // Callers supply fixed messages or numeric counts, never native exceptions,
-  // parameters, URLs, IDs, response text, headers or token-bearing cache keys.
-  if(typeof console!=='undefined' && typeof console.log==='function')console.log('[Danmu Fusion]['+stage+'] '+message);
+  // Only fixed messages/counts. Never log native exceptions or server text.
+  if(typeof console!=='undefined' && typeof console.log==='function')console.log('[Danmu Fusion]['+stage+']['+event.category+'] '+event.message);
 }
 function compatDiagnostics(){return JSON.parse(JSON.stringify(compatEvents));}
+function compatSummary(){return {version:'1.5.1',events:compatDiagnostics().filter(e=>!['OK','REQUEST','RESPONSE','HIT','READY','RETURN','COUNTS'].includes(e.code)).slice(-12)};}
+function compatEmpty(error){
+  const safe=error && compatSafeErrors.has(error),code=safe?error.code:'RUNTIME_ERROR',status=safe?error.status:undefined;
+  return {comments:[],count:0,success:false,error:{code:code,category:compatCategory(code,status)},message:compatMessage(code,status) || '弹幕加载异常，请向开发者反馈诊断摘要',diagnostics:compatSummary()};
+}
 function compatSetStage(stage){compatStage=Math.max(1,Math.min(6,Number(stage)||1));compatLookups.clear();compatResponses.clear();compatPending.clear();compatYearMatches.clear();compatMatchUnsupported.clear();}
-function compatError(stage,code,message,status){const e=new Error(message);e.fusionSafe=true;e.stage=stage;e.code=code;e.status=status;return e;}
+function compatError(stage,code,message,status){const e=new Error(message);e.fusionSafe=true;e.stage=stage;e.code=code;e.status=status;compatSafeErrors.add(e);return e;}
 function compatFailure(stage,error){
-  if(error && error.fusionSafe)compatLog(error.stage,error.code,error.message);
-  else compatLog(stage,'RUNTIME_ERROR','Unexpected module runtime error');
+  if(error && compatSafeErrors.has(error))compatLog(error.stage,error.code,error.message,error.status);
+  else compatLog(stage,'RUNTIME_ERROR','模块运行异常，请反馈安全诊断摘要');
 }
 function compatConfig(params){
   try{
     const cfg=parseDanmuApiUrl(firstPresent(params,['danmu_api_url','server']) || '');
     if(/\/api\/v2\/(?:search\/(?:anime|episodes)|bangumi\/[^/]+|comment\/[^/]+|match|segmentcomment)\/?$/i.test(cfg.requestBase))throw new Error('endpoint');
+    const authority=(cfg.requestBase.match(/^https?:\/\/([^/]+)/i) || [])[1] || '';
+    const parsed=authority.match(/^(?:\[[a-f0-9:.]+\]|[^:[\]]+)(?::(\d+))?$/i);
+    if(!parsed || parsed[1]!=null && !(Number(parsed[1])>=1 && Number(parsed[1])<=65535) || /%(?![a-f0-9]{2})/i.test(cfg.requestBase+'?'+cfg.query))throw new Error('address');
     compatLog('Address','OK','API address normalized');return cfg;
   }catch(e){throw compatError('Address','INVALID_ADDRESS','Invalid API address; use an HTTP(S) server root or /api/v2 suffix');}
 }
@@ -1787,7 +1806,8 @@ function compatPlaybackKey(cfg,params,id){return compatKey(cfg,[id,params.tmdbId
 
 async function compatHttp(cfg,path,stage,body){
   const key=fusionDigest(JSON.stringify([cfg.requestBase,cfg.query || '',path,body || null]));
-  if(compatPending.has(key))return JSON.parse(JSON.stringify(await compatPending.get(key)));
+  // Responses are private to the adapter. Public results are copied at output.
+  if(compatPending.has(key)){const data=await compatPending.get(key);return stage==='Comments' || stage==='Segment'?data:compatCopy(data);}
   if(compatPending.size>=12)throw compatError(stage,'BUSY','Native request capacity reached; retry later');
   const task=(async()=>{
     compatLog(stage,'REQUEST','Request started');
@@ -1803,7 +1823,7 @@ async function compatHttp(cfg,path,stage,body){
       }else response=await Widget.http.get(url,{headers:headers()});
     }
     catch(e){
-      if(e && e.fusionSafe)throw e;
+      if(e && compatSafeErrors.has(e))throw e;
       const status=Number(e && (e.statusCode || e.status || e.response && (e.response.statusCode || e.response.status)));
       if(status>=400 && status<=599)throw compatError('HTTP','HTTP_STATUS','Request failed: '+status,status);
       const timeout=e && (e.name==='AbortError' || e.name==='TimeoutError' || e.code==='ETIMEDOUT' || e.code===-1001);
@@ -1974,9 +1994,10 @@ async function fusionCompatSearch(params){
     const raw=data.animes.filter(a=>a && compatPresent(a.animeId) && typeof a.animeTitle==='string');
     const animes=await compatVerifyYear(cfg,params,raw,compatRank(raw,params));
     for(const candidate of animes.slice(0,32))await compatRemember(cfg,candidate);
+    if(!animes.length)compatLog('Search','NO_RESULTS','No matching work');
     compatLog('Search','RETURN','Returning animes: '+animes.length);
-    return {animes:animes};
-  }catch(e){compatFailure('Search',e);return {animes:[]};}
+    return animes.length?{animes:animes}:{animes:[],message:compatMessage('NO_RESULTS'),diagnostics:compatSummary()};
+  }catch(e){compatFailure('Search',e);const failure=compatEmpty(e);return {animes:[],message:failure.message,error:failure.error,diagnostics:failure.diagnostics};}
 }
 
 function compatEpisodes(data){
@@ -2010,25 +2031,52 @@ async function fusionCompatDetail(params){
   }catch(e){compatFailure('Detail',e);return [];}
 }
 
-function compatSave(key,data){
+function compatCopy(value){
+  if(!value || typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(compatCopy);
+  const copy={};for(const key of Object.keys(value))copy[key]=compatCopy(value[key]);return copy;
+}
+function compatSave(key,data,track){
   if(compatStage<5 || !data || data.taskId || Array.isArray(data.comments) && !data.comments.length)return;
-  const serialized=JSON.stringify(data),bytes=serialized.length*2;if(bytes>2*1024*1024)return;
-  compatResponses.delete(key);compatResponses.set(key,{expires:Date.now()+180000,value:serialized,bytes:bytes});
+  let bytes,value;
+  if(track){
+    // Count object/index overhead as well as UTF-16 payload. Stop estimating as
+    // soon as it is too big; never serialize an entire oversized track to reject it.
+    bytes=256+data.comments.length*160;
+    if(bytes>2*1024*1024)return;
+    const metadata=Object.assign({},data);delete metadata.comments;
+    bytes+=JSON.stringify(metadata).length*2;
+    for(const c of data.comments){bytes+=JSON.stringify(c).length*2;if(bytes>2*1024*1024)return;}
+    const windows=new Map();
+    for(let i=0;i<data.comments.length;i++){
+      const minute=Math.floor(compatTime(data.comments[i])/60);
+      if(!windows.has(minute))windows.set(minute,[]);windows.get(minute).push(i);
+    }
+    compatWindows.set(data,windows);value=data;
+  }else{value=JSON.stringify(data);bytes=value.length*2;if(bytes>2*1024*1024)return;}
+  // Expire all entries on access/insertion, with no timer dependency.
+  for(const [k,v] of compatResponses)if(v.expires<=Date.now())compatResponses.delete(k);
+  compatResponses.delete(key);compatResponses.set(key,{expires:Date.now()+180000,value:value,bytes:bytes,track:!!track});
   let size=0;compatResponses.forEach(v=>{size+=v.bytes;});
   while(compatResponses.size>4 || size>2*1024*1024){const first=compatResponses.keys().next().value;size-=compatResponses.get(first).bytes;compatResponses.delete(first);}
 }
-function compatRead(key){
+function compatRead(key,borrow){
   if(compatStage<5)return null;
-  const saved=compatResponses.get(key);if(!saved || saved.expires<=Date.now()){compatResponses.delete(key);return null;}
-  compatLog('Cache','HIT','Comment cache hit');return JSON.parse(saved.value);
+  for(const [k,v] of compatResponses)if(v.expires<=Date.now())compatResponses.delete(k);
+  const saved=compatResponses.get(key);if(!saved)return null;
+  compatLog('Cache','HIT','Cache hit');
+  return saved.track?(borrow?saved.value:compatCopy(saved.value)):JSON.parse(saved.value);
 }
+function compatCacheStats(){let bytes=0;compatResponses.forEach(v=>bytes+=v.bytes);return {entries:compatResponses.size,bytes:bytes,pending:compatPending.size,commentJobs:compatCommentJobs.size,validations:compatCounters.validations,records:compatCounters.records};}
+function compatTime(c){return Number(c.p.slice(0,c.p.indexOf(',')));}
 function compatCommentsResult(data,progress,params){
   if(!Array.isArray(data.comments))throw compatError('Comments','INVALID_COMMENTS','Invalid response structure: comments must be an array');
   // Verified native multi-source movies exceed 200k rows. The old limit made
   // an otherwise valid merged track empty; keep the full verified-size track.
   if(data.comments.length>500000)throw compatError('Comments','TOO_MANY_COMMENTS','Comment count exceeds 500000 safety limit');
+  if(!compatValidated.has(data)){compatCounters.validations++;compatCounters.records+=data.comments.length;}
   const seen=new Set();let invalid=0,removed=0;
-  let list=data.comments.filter(c=>{
+  let list=compatValidated.has(data)?data.comments:data.comments.filter(c=>{
     const fields=c && typeof c.p==='string'?c.p.split(','):[];
     if(!c || fields.length<3 || !fields[0].trim() || c.m==null || !Number.isFinite(Number(fields[0])) || Number(fields[0])<0 || !Number.isFinite(Number(fields[1])) || !Number.isFinite(Number(fields.length>=8?fields[3]:fields[2]))){invalid++;return false;}
     if(compatStage<4 || !compatPresent(c.cid))return true;
@@ -2037,10 +2085,36 @@ function compatCommentsResult(data,progress,params){
   if(invalid && !list.length)throw compatError('Comments','INVALID_RECORDS','Invalid comment records: expected p and m');
   if(progress && compatStage>=6){
     const time=Number(params.segmentTime);if(!Number.isFinite(time) || time<0)throw compatError('Comments','INVALID_PROGRESS','Invalid segmentTime');
-    const start=Math.floor(time/60)*60;list=list.filter(c=>Number(c.p.split(',')[0])>=start && Number(c.p.split(',')[0])<start+60);
+    const start=Math.floor(time/60)*60,windows=compatWindows.get(data);
+    list=windows?(windows.get(start/60) || []).map(i=>data.comments[i]):list.filter(c=>compatTime(c)>=start && compatTime(c)<start+60);
   }
   compatLog('Parse','COUNTS','Comments parsed: '+data.comments.length+'; invalid: '+invalid+'; duplicates: '+removed+'; returned: '+list.length);
-  return Object.assign({},data,{comments:list,count:list.length});
+  const result=Object.assign({},data,{comments:list,count:list.length});
+  compatValidated.add(result);return result;
+}
+async function compatLoadComments(cfg,params,id,key){
+  const cached=compatRead(key,true);if(cached)return cached;
+  if(compatCommentJobs.has(key))return compatCommentJobs.get(key);
+  if(compatCommentJobs.size>=12)throw compatError('Comments','BUSY','Comment request capacity reached');
+  const task=compatFetchComments(cfg,params,id,key);compatCommentJobs.set(key,task);
+  try{return await task;}finally{compatCommentJobs.delete(key);}
+}
+async function compatFetchComments(cfg,params,id,key){
+  const related=compatStage>=3?'true':'false';let data;
+  try{data=await compatHttp(cfg,'/api/v2/comment/'+encodeURIComponent(String(id))+'?async=1&withRelated='+related+'&chConvert=1','Comments');}
+  catch(e){
+    if(![400,422].includes(e.status))throw e;
+    compatLog('Comments','STANDARD_FALLBACK','Optional comment parameters rejected; using standard request');
+    data=await compatHttp(cfg,'/api/v2/comment/'+encodeURIComponent(String(id))+'?withRelated='+related,'Comments');
+  }
+  if(data.taskId && (!Array.isArray(data.comments) || !data.comments.length)){
+    compatLog('Comments','PENDING_TASK','Server download pending; retry playback later');return Object.assign({},data,{comments:[],count:0});
+  }
+  if(Array.isArray(data))data={comments:data};
+  if(Array.isArray(data.comments)){
+    data=compatCommentsResult(data,false,params);compatSave(key,data,true);
+  }
+  return data;
 }
 async function fusionCompatComments(params,progress){
   try{
@@ -2048,25 +2122,7 @@ async function fusionCompatComments(params,progress){
     if(!compatPresent(id))throw compatError('Comments','MISSING_COMMENT_ID','Missing commentId');
     if(compatLegacyId(id))throw compatError('Comments','LEGACY_SELECTION','Legacy automatic selection; select an episode again');
     const cfg=compatConfig(params),key=compatPlaybackKey(cfg,params,id);
-    let data=compatRead(key);
-    if(!data){
-      const related=compatStage>=3?'true':'false';
-      try{data=await compatHttp(cfg,'/api/v2/comment/'+encodeURIComponent(String(id))+'?async=1&withRelated='+related+'&chConvert=1','Comments');}
-      catch(e){
-        if(![400,422].includes(e.status))throw e;
-        compatLog('Comments','STANDARD_FALLBACK','Optional comment parameters rejected; using standard request');
-        data=await compatHttp(cfg,'/api/v2/comment/'+encodeURIComponent(String(id))+'?withRelated='+related,'Comments');
-      }
-      // Empty/task responses never enter the cache: next call must retry.
-      if(data.taskId && (!Array.isArray(data.comments) || !data.comments.length)){
-        compatLog('Comments','PENDING_TASK','Server download pending; retry playback later');return Object.assign({},data,{comments:[],count:0});
-      }
-      if(Array.isArray(data))data={comments:data};
-      if(Array.isArray(data.comments)){
-        data=compatCommentsResult(data,false,params);
-        compatSave(key,data);
-      }
-    }
+    let data=await compatLoadComments(cfg,params,id,key);
     if(compatStage>=6 && Array.isArray(data.barrage_list) && data.barrage_list.length && (!Array.isArray(data.comments) || !data.comments.length)){
       const time=Number(params.segmentTime || 0);
       if(!Number.isFinite(time) || time<0)throw compatError('Comments','INVALID_PROGRESS','Invalid segmentTime');
@@ -2074,16 +2130,69 @@ async function fusionCompatComments(params,progress){
       if(!segment){compatLog('Segment','EMPTY','No segment at requested time');return {comments:[],count:0};}
       if(!/^https?:\/\//i.test(String(segment.segment_url || '')))throw compatError('Segment','INVALID_URL','Invalid segment URL');
       const segmentKey=key+':segment:'+fusionDigest(JSON.stringify(segment));
-      let fragment=compatRead(segmentKey);
-      if(!fragment){fragment=await compatHttp(cfg,segment.segment_url,'Segment');if(Array.isArray(fragment))fragment={comments:fragment};fragment=compatCommentsResult(fragment,false,params);compatSave(segmentKey,fragment);}
+      let fragment=compatRead(segmentKey,true);
+      if(!fragment){fragment=await compatHttp(cfg,segment.segment_url,'Segment');if(Array.isArray(fragment))fragment={comments:fragment};fragment=compatCommentsResult(fragment,false,params);compatSave(segmentKey,fragment,true);}
       data=fragment;
     }
     const result=compatCommentsResult(data,!!progress && params.segmentTime!=null,params);
-    compatLog('Comments','RETURN','Returning response.data comments: '+result.count);return result;
-  }catch(e){compatFailure('Comments',e);return {comments:[],count:0,success:false};}
+    if(!result.count && !progress && !result.taskId)compatLog('Comments','NO_COMMENTS','No comments in current episode');
+    compatLog('Comments','RETURN','Returning response.data comments: '+result.count);
+    const output=compatCopy(result);
+    for(const field of ['error','message','diagnostics','diagnostic','headers','request','config','authorization','Authorization'])delete output[field];
+    if(!output.count && !progress){output.message=compatMessage(output.taskId?'PENDING_TASK':'NO_COMMENTS');output.diagnostics=compatSummary();}
+    return output;
+  }catch(e){compatFailure('Comments',e);return compatEmpty(e);}
 }
 
 compatLog('Init','READY','Adapter ready; browser timers '+(typeof setTimeout==='function'?'available':'unavailable'));
+
+/* AGPL-3.0-only. Advisory source preferences, never routing/merge authority.
+ * String-only Widget storage; bounded records, TTL, no credentials or titles.
+ */
+let preferenceState=null;
+let preferenceOperations=0;
+const preferenceStorageKey='fusion-preference-v1';
+function preferenceKey(e){
+  if(!e || !e.title || !e.year || !['tv','movie'].includes(e.kind) || e.kind==='tv' && !(e.season>0))return null;
+  return fusionDigest(JSON.stringify([e.title,e.year,e.kind,e.season,e.tmdb || '',e.edition || '',e.language || '',e.context || '']));
+}
+async function preferenceAccess(sources,update){
+  // Preference storage is optional; saturation never delays playback in a queue.
+  if(preferenceOperations>=8)return {};
+  preferenceOperations++;
+  const signature=fusionDigest(sources.map(c=>c.s).sort().join(':'));
+  const task=multiStorageQueue.then(async()=>{
+    if(!preferenceState){
+      try{const saved=Widget.storage && await Widget.storage.get(preferenceStorageKey);if(typeof saved==='string' && saved.length<=20000)preferenceState=JSON.parse(saved);}catch(e){}
+    }
+    if(!preferenceState || preferenceState.config!==signature || !preferenceState.items || typeof preferenceState.items!=='object' || Array.isArray(preferenceState.items)){
+      if(preferenceState)compatLog('Memory','PREFERENCE_EXPIRED','Source preference invalidated');
+      preferenceState={config:signature,items:{}};
+    }
+    const items=preferenceState.items,now=Date.now();
+    for(const key of Object.keys(items)){
+      const r=items[key];
+      if(!/^[a-f0-9]{64}$/.test(key) || !r || !sources.some(c=>c.s===r.source) || !Number.isFinite(r.expires) || r.expires<=now)delete items[key];
+    }
+    if(update && update.key && sources.some(c=>c.s===update.source)){
+      delete items[update.key];items[update.key]={source:update.source,expires:now+30*86400000};
+    }
+    while(Object.keys(items).length>48)delete items[Object.keys(items)[0]];
+    try{if(Widget.storage)await Widget.storage.set(preferenceStorageKey,JSON.stringify(preferenceState));}catch(e){compatLog('Memory','MEMORY_ONLY','Optional preference storage unavailable');}
+    return Object.assign({},items);
+  });
+  multiStorageQueue=task.catch(()=>{});
+  try{return await task;}finally{preferenceOperations--;}
+}
+async function preferenceSelect(sources,ref){
+  const key=preferenceKey(ref.e || ref.p && ref.p.work);
+  if(!key)return;
+  const signature=fusionDigest(sources.map(c=>c.s).sort().join(':'));
+  const saved=preferenceState && preferenceState.config===signature && preferenceState.items[key];
+  if(saved && saved.source===ref.s && saved.expires>Date.now())return;
+  await preferenceAccess(sources,{key:key,source:ref.s});
+}
+function preferenceMatches(items,e,source){const key=preferenceKey(e);return !!(key && items[key] && items[key].source===source);}
 
 /* AGPL-3.0-only. Incremental orchestration around the verified 1.4.5 adapter.
  * No timers, fetch, URL, Node APIs, or background polling. IDs contain only
@@ -2152,9 +2261,16 @@ function multiDecode(id,kind,sources){
     for(const ref of refs){
       if(!ref || !/^[a-f0-9]{64}$/.test(ref.s) || !multiRawId(ref.i) || ref.b!=null && !multiRawId(ref.b))throw 0;
       if(!sources.some(s=>s.s===ref.s))throw compatError('Route','SOURCE_CHANGED','Selected API changed or was removed; search and select again');
+      if(ref.a!=null){
+        if(!Array.isArray(ref.a) || ref.a.length>2 || new Set([ref.s].concat(ref.a.map(r=>r && r.s))).size!==ref.a.length+1)throw 0;
+        for(const alt of ref.a){
+          if(!alt || !/^[a-f0-9]{64}$/.test(alt.s) || !multiRawId(alt.i) || alt.b!=null && !multiRawId(alt.b) || alt.a!=null)throw 0;
+          if(!sources.some(s=>s.s===alt.s))throw compatError('Route','SOURCE_CHANGED','Backup API changed; search and select again');
+        }
+      }
     }
     return refs;
-  }catch(e){if(e && e.fusionSafe)throw e;throw compatError('Route','INVALID_SELECTION','Invalid historical selection; search and select again');}
+  }catch(e){if(e && compatSafeErrors.has(e))throw e;throw compatError('Route','INVALID_SELECTION','Invalid historical selection; search and select again');}
 }
 function multiRef(cfg,candidate,evidence){
   if(!multiRawId(candidate.animeId))throw compatError('Route','INVALID_ID','Unsupported server resource ID');
@@ -2189,15 +2305,17 @@ async function multiBare(sources,kind,id,fresh){
 // slow peer. Late results populate the same bounded cache for the next call.
 async function multiFirst(tasks,usable){
   if(!tasks.length)return {values:[],partial:false};
-  const states=tasks.map(()=>({done:false,value:null}));let remaining=tasks.length,finish;
+  const states=tasks.map(()=>({done:false,value:null}));let remaining=tasks.length,finish,accepting=true;
   const ready=new Promise(resolve=>{finish=resolve;});
   tasks.forEach((task,index)=>Promise.resolve(task).then(value=>{
-    states[index]={done:true,value:value};remaining--;if(usable(value) || !remaining)finish();
-  },error=>{states[index]={done:true,value:null};remaining--;compatFailure('MultiAPI',error);if(!remaining)finish();}));
+    if(accepting)states[index]={done:true,value:value};remaining--;if(usable(value) || !remaining)finish();
+  },error=>{if(accepting)states[index]={done:true,value:null};remaining--;compatFailure('MultiAPI',error);if(!remaining)finish();}));
   await ready;
   // Drain already-queued completions; this never waits for a network event.
   await Promise.resolve();
-  return {values:states.filter(s=>s.done && s.value).map(s=>s.value),partial:remaining>0};
+  const values=states.filter(s=>s.done && s.value).map(s=>s.value);
+  accepting=false;states.length=0;tasks.length=0;
+  return {values:values,partial:remaining>0};
 }
 async function multiJob(cfg,key,loader){
   const cacheKey=compatKey(cfg,'multi:'+key),cached=compatRead(cacheKey);
@@ -2217,7 +2335,7 @@ function multiEvidence(candidate,params){
   const year=compatReleaseYear(candidate),movie=/movie|film|电影|電影|剧场版|劇場版/i.test([candidate.type,candidate.typeDescription,candidate.mediaType].join(' '));
   const season=identity.isMovie?null:c.season!=null?Number(c.season):compatDeclaredSeason(candidate.animeTitle);
   if(!title || !year || identity.special || fusionSpecial(candidate.animeTitle)!=='regular' || (identity.isMovie?!movie:!fusionTvType(candidate) || !(season>0)))return null;
-  return {title:title,year:year,kind:identity.isMovie?'movie':'tv',season:season,tmdb:String(c.tmdb_id || c.tmdbId || ''),edition:multiEdition(candidate),language:multiLanguage(candidate)};
+  return {title:title,year:year,kind:identity.isMovie?'movie':'tv',season:season,tmdb:String(c.tmdb_id || c.tmdbId || ''),edition:multiEdition(candidate),language:multiLanguage(candidate),context:fusionDigest(JSON.stringify([identity.tmdb_id || '',identity.year || '',identity.version_key || '',multiEdition(params),multiLanguage(params)]))};
 }
 function multiSameWork(a,b){return a && b && a.title===b.title && a.year===b.year && a.kind===b.kind && a.season===b.season && !(a.tmdb && b.tmdb && a.tmdb!==b.tmdb) && a.edition===b.edition && a.language===b.language;}
 function multiEdition(value){
@@ -2245,10 +2363,13 @@ async function fusionMultiSearch(params){
         entries.push({cfg:cfg,c:c,e:multiEvidence(c,params)});
       }
     }
-    entries.sort((a,b)=>multiNative(b.c)-multiNative(a.c) || a.cfg.slot-b.cfg.slot);
+    const preferences=await preferenceAccess(sources);
+    entries.sort((a,b)=>Number(preferenceMatches(preferences,b.e,b.cfg.s))-Number(preferenceMatches(preferences,a.e,a.cfg.s)) || multiNative(b.c)-multiNative(a.c) || a.cfg.slot-b.cfg.slot);
     const animes=entries.map(v=>{
-      const id=multiId('a',[multiRef(v.cfg,v.c,v.e)]);
-      return Object.assign({},v.c,{animeId:id,bangumiId:id,animeTitle:v.c.animeTitle+' · API '+v.cfg.slot});
+      const ref=multiRef(v.cfg,v.c,v.e),alternatives=entries.filter(a=>a.cfg.s!==v.cfg.s && multiSameWork(v.e,a.e));
+      ref.a=alternatives.filter((a,i)=>alternatives.findIndex(b=>b.cfg.s===a.cfg.s)===i).slice(0,2).map(a=>multiRef(a.cfg,a.c,a.e));
+      const id=multiId('a',[ref]),preferred=preferenceMatches(preferences,v.e,v.cfg.s);
+      return Object.assign({},v.c,{animeId:id,bangumiId:id,isFavorited:preferred || v.c.isFavorited,animeTitle:(preferred?'上次来源 · ':'')+v.c.animeTitle+' · API '+v.cfg.slot});
     });
     // One best (preferably native merged) candidate from each API per identity.
     // Details decide whether episodes actually have sufficient timeline proof.
@@ -2264,9 +2385,10 @@ async function fusionMultiSearch(params){
       const id=multiId('a',members.map(v=>multiRef(v.cfg,v.c,v.e)));
       animes.unshift(Object.assign({},root.c,{animeId:id,bangumiId:id,animeTitle:root.c.animeTitle+' · 跨 API 选源（'+members.map(v=>v.cfg.slot).join('+')+'）'}));
     }
+    animes.sort((a,b)=>Number(!!b.isFavorited)-Number(!!a.isFavorited));
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Search APIs available: '+batch.values.filter(v=>v.animes.length).length+'; candidates: '+animes.length+(batch.partial?'; slow peers continue in bounded cache':''));
-    return {animes:animes};
-  }catch(e){compatFailure('Search',e);return {animes:[]};}
+    return animes.length?{animes:animes}:{animes:[],message:'未取得可用作品，请查看诊断后重试或手动搜索',diagnostics:compatSummary()};
+  }catch(e){compatFailure('Search',e);const failure=compatEmpty(e);return {animes:[],message:failure.message,error:failure.error,diagnostics:failure.diagnostics};}
 }
 async function multiDetailOne(ref,cfg,params){
   const selected=await compatRecall(cfg,ref.i);
@@ -2314,22 +2436,42 @@ async function fusionMultiDetail(params){
       if(episodes.length)await multiBare(sources,'c',episodes.slice(0,2000).map(e=>e.episodeId),true);
       return episodes;
     }
-    const batch=await multiFirst(refs.map(ref=>{
+    const requested=refs.slice();
+    if(refs.length===1 && refs[0].a)for(const alt of refs[0].a)if(multiSameWork(refs[0].e,alt.e))requested.push(alt);
+    const batch=await multiFirst(requested.map(ref=>{
       const cfg=sources.find(c=>c.s===ref.s);
       return multiJob(cfg,'detail:'+fusionDigest(JSON.stringify(ref)),async()=>({ref:ref,episodes:(await multiDetailOne(ref,cfg,params)).slice(0,2000)}));
-    }),v=>v.episodes.length>0);
+    }),v=>v.episodes.length>0 && refs.some(r=>r.s===v.ref.s));
     const entries=[];
-    for(const ref of refs){
+    for(const ref of requested){
       const result=batch.values.find(v=>v.ref.s===ref.s);if(!result)continue;
       const cfg=sources.find(c=>c.s===ref.s);
       for(const e of result.episodes){
         if(!multiRawId(e.episodeId))continue;
-        entries.push({cfg:cfg,e:e,proof:multiEpisodeProof(e,ref.e)});
+        entries.push({cfg:cfg,e:e,work:ref.e,proof:multiEpisodeProof(e,ref.e)});
       }
     }
-    const episodes=entries.map(v=>Object.assign({},v.e,{episodeId:multiId('c',[{s:v.cfg.s,i:v.e.episodeId}]),episodeTitle:v.e.episodeTitle+' · API '+v.cfg.slot}));
+    // Index exact proof buckets once. TMDB conflicts are still checked below;
+    // duplicate episode numbers per API are counted before recommending backups.
+    const proofBuckets=new Map();
+    const proofKey=p=>p && JSON.stringify([p.work.title,p.work.year,p.work.kind,p.work.season,p.work.edition,p.work.language,p.number,p.duration,p.timeline,p.edition,p.language]);
+    for(const entry of entries){
+      const key=proofKey(entry.proof);if(!key)continue;
+      if(!proofBuckets.has(key))proofBuckets.set(key,{members:[],counts:new Map()});
+      const bucket=proofBuckets.get(key);bucket.members.push(entry);bucket.counts.set(entry.cfg.s,(bucket.counts.get(entry.cfg.s) || 0)+1);
+    }
+    const episodes=entries.filter(v=>refs.some(r=>r.s===v.cfg.s)).map(v=>{
+      const ref={s:v.cfg.s,i:v.e.episodeId,e:v.work,p:v.proof};
+      // Duplicate episode numbers within an API are ambiguous, even if hashes
+      // happen to agree. Never pick an alternative by array position.
+      const bucket=proofBuckets.get(proofKey(v.proof));
+      if(bucket && bucket.counts.get(v.cfg.s)===1){
+        ref.a=bucket.members.filter(a=>a.cfg.s!==v.cfg.s && bucket.counts.get(a.cfg.s)===1 && multiSameEpisode(v.proof,a.proof)).slice(0,2).map(a=>({s:a.cfg.s,i:a.e.episodeId,p:a.proof}));
+      }
+      return Object.assign({},v.e,{episodeId:multiId('c',[ref]),episodeTitle:v.e.episodeTitle+' · API '+v.cfg.slot});
+    });
     const used=new Set();
-    for(let i=0;i<entries.length;i++){
+    for(let i=0;refs.length>1 && i<entries.length;i++){
       if(used.has(i))continue;const root=entries[i],members=[root];
       for(let j=i+1;j<entries.length;j++){
         const v=entries[j];if(members.some(m=>m.cfg.s===v.cfg.s) || !members.every(m=>multiSameEpisode(m.proof,v.proof)))continue;
@@ -2338,6 +2480,7 @@ async function fusionMultiDetail(params){
       if(members.length<2)continue;
       episodes.unshift(Object.assign({},root.e,{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof}))),episodeTitle:root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
     }
+    if(refs.length>1 && !episodes.some(e=>e.episodeTitle.includes('安全聚合')))compatLog('Route','UNPROVEN_TIMELINE','Choose independent source');
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Returning routed episodes: '+episodes.length);
     return episodes;
   }catch(e){compatFailure('Detail',e);return [];}
@@ -2375,6 +2518,7 @@ async function fusionMultiComments(params,progress){
       if(compatPresent(id))await multiBare(sources,'c',id,false);
       return fusionCompatComments(multiParams(params,sources[0]),progress);
     }
+    if(refs.length===1)return await multiSelectedComments(params,progress,sources,refs[0]);
     if(refs.length>1 && (!refs[0].p || !refs.every(r=>multiSameEpisode(refs[0].p,r.p))))throw compatError('Route','UNPROVEN_TIMELINE','Historical aggregate lacks timeline evidence; select an individual source');
     const batch=await multiFirst(refs.map(async ref=>{
       const cfg=sources.find(c=>c.s===ref.s),data=await fusionCompatComments(Object.assign(multiParams(params,cfg),{commentId:ref.i,episodeId:ref.i}),progress);
@@ -2391,7 +2535,42 @@ async function fusionMultiComments(params,progress){
     if(usable.length>1)return multiMerge(usable);
     if(usable.length===1)return refs.length>1?multiMerge(usable):usable[0].data;
     return values.length?values[0].data:{comments:[],count:0,success:false};
-  }catch(e){compatFailure('Comments',e);return {comments:[],count:0,success:false};}
+  }catch(e){compatFailure('Comments',e);return compatEmpty(e);}
+}
+
+function multiResponseMatches(data,proof){
+  return !proof || !(multiDuration(data)!=null && multiDuration(data)!==proof.duration || multiTimeline(data)!=null && multiTimeline(data)!==proof.timeline || multiEdition(data) && multiEdition(data)!==proof.edition || multiLanguage(data) && multiLanguage(data)!==proof.language);
+}
+async function multiSelectedComments(params,progress,sources,ref){
+  const load=async member=>{
+    const cfg=sources.find(c=>c.s===member.s);
+    const data=await fusionCompatComments(Object.assign(multiParams(params,cfg),{commentId:member.i,episodeId:member.i}),progress);
+    if(!multiResponseMatches(data,member.p)){
+      const error=compatError('Route','TIMELINE_CHANGED','Server video version changed');compatFailure('Route',error);return compatEmpty(error);
+    }
+    return data;
+  };
+  const primary=await load(ref);
+  // A valid empty progress window is success, not evidence that a track failed.
+  if(primary.success!==false && !primary.taskId && (primary.count>0 || progress)){
+    if(primary.count>0)await preferenceSelect(sources,ref);
+    return primary;
+  }
+  const alternatives=(ref.a || []).filter(a=>multiSameEpisode(ref.p,a.p));
+  if(!alternatives.length){
+    if(ref.a && ref.a.length)compatLog('Fallback','UNPROVEN_TIMELINE','Unverified fallback rejected');
+    return primary;
+  }
+  const original=primary.error || {code:primary.taskId?'PENDING_TASK':'NO_COMMENTS',category:primary.taskId?'PENDING_TASK':'NO_COMMENTS'};
+  // At most two, each attempted once. No recursion, cycles, offsets or merging.
+  for(const alternative of alternatives){
+    const data=await load(alternative);
+    if(data.success===false || data.taskId || !data.count && !progress)continue;
+    compatLog('Fallback','FALLBACK_USED','Verified fallback used');
+    return Object.assign({},data,{message:compatMessage('FALLBACK_USED'),fallback:{original:original,from:sources.find(c=>c.s===ref.s).slot,to:sources.find(c=>c.s===alternative.s).slot},diagnostics:compatSummary()});
+  }
+  compatLog('Fallback','FALLBACK_FAILED','No healthy verified fallback');
+  return Object.assign({},primary,{diagnostics:compatSummary()});
 }
 
 // END GENERATED FUSION ENGINE
@@ -2408,7 +2587,7 @@ if (typeof module !== "undefined" && module.exports) {
       fusionWindow, fusionKey, fusionEpisodeNumber, fusionParse, fusionLoad,
       fusionAutoId, fusionAutomatic, fusionSeasonCandidate,
       fusionSearch, fusionDetail, fusionCompatSearch, fusionCompatDetail, fusionCompatComments,
-      compatSetStage, compatDiagnostics,
+      compatSetStage, compatDiagnostics, compatSummary, compatCacheStats,
       parseDanmuApiUrl, fusionTracks,
       decodeEpisodeFromSyntheticId, classifyMediaKind, stableAnimeId,
       parseAnimeId, parseUnionOrMediaId, resolveIdentity, resolveSeasonEpisode,

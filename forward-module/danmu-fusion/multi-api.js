@@ -65,9 +65,16 @@ function multiDecode(id,kind,sources){
     for(const ref of refs){
       if(!ref || !/^[a-f0-9]{64}$/.test(ref.s) || !multiRawId(ref.i) || ref.b!=null && !multiRawId(ref.b))throw 0;
       if(!sources.some(s=>s.s===ref.s))throw compatError('Route','SOURCE_CHANGED','Selected API changed or was removed; search and select again');
+      if(ref.a!=null){
+        if(!Array.isArray(ref.a) || ref.a.length>2 || new Set([ref.s].concat(ref.a.map(r=>r && r.s))).size!==ref.a.length+1)throw 0;
+        for(const alt of ref.a){
+          if(!alt || !/^[a-f0-9]{64}$/.test(alt.s) || !multiRawId(alt.i) || alt.b!=null && !multiRawId(alt.b) || alt.a!=null)throw 0;
+          if(!sources.some(s=>s.s===alt.s))throw compatError('Route','SOURCE_CHANGED','Backup API changed; search and select again');
+        }
+      }
     }
     return refs;
-  }catch(e){if(e && e.fusionSafe)throw e;throw compatError('Route','INVALID_SELECTION','Invalid historical selection; search and select again');}
+  }catch(e){if(e && compatSafeErrors.has(e))throw e;throw compatError('Route','INVALID_SELECTION','Invalid historical selection; search and select again');}
 }
 function multiRef(cfg,candidate,evidence){
   if(!multiRawId(candidate.animeId))throw compatError('Route','INVALID_ID','Unsupported server resource ID');
@@ -102,15 +109,17 @@ async function multiBare(sources,kind,id,fresh){
 // slow peer. Late results populate the same bounded cache for the next call.
 async function multiFirst(tasks,usable){
   if(!tasks.length)return {values:[],partial:false};
-  const states=tasks.map(()=>({done:false,value:null}));let remaining=tasks.length,finish;
+  const states=tasks.map(()=>({done:false,value:null}));let remaining=tasks.length,finish,accepting=true;
   const ready=new Promise(resolve=>{finish=resolve;});
   tasks.forEach((task,index)=>Promise.resolve(task).then(value=>{
-    states[index]={done:true,value:value};remaining--;if(usable(value) || !remaining)finish();
-  },error=>{states[index]={done:true,value:null};remaining--;compatFailure('MultiAPI',error);if(!remaining)finish();}));
+    if(accepting)states[index]={done:true,value:value};remaining--;if(usable(value) || !remaining)finish();
+  },error=>{if(accepting)states[index]={done:true,value:null};remaining--;compatFailure('MultiAPI',error);if(!remaining)finish();}));
   await ready;
   // Drain already-queued completions; this never waits for a network event.
   await Promise.resolve();
-  return {values:states.filter(s=>s.done && s.value).map(s=>s.value),partial:remaining>0};
+  const values=states.filter(s=>s.done && s.value).map(s=>s.value);
+  accepting=false;states.length=0;tasks.length=0;
+  return {values:values,partial:remaining>0};
 }
 async function multiJob(cfg,key,loader){
   const cacheKey=compatKey(cfg,'multi:'+key),cached=compatRead(cacheKey);
@@ -130,7 +139,7 @@ function multiEvidence(candidate,params){
   const year=compatReleaseYear(candidate),movie=/movie|film|电影|電影|剧场版|劇場版/i.test([candidate.type,candidate.typeDescription,candidate.mediaType].join(' '));
   const season=identity.isMovie?null:c.season!=null?Number(c.season):compatDeclaredSeason(candidate.animeTitle);
   if(!title || !year || identity.special || fusionSpecial(candidate.animeTitle)!=='regular' || (identity.isMovie?!movie:!fusionTvType(candidate) || !(season>0)))return null;
-  return {title:title,year:year,kind:identity.isMovie?'movie':'tv',season:season,tmdb:String(c.tmdb_id || c.tmdbId || ''),edition:multiEdition(candidate),language:multiLanguage(candidate)};
+  return {title:title,year:year,kind:identity.isMovie?'movie':'tv',season:season,tmdb:String(c.tmdb_id || c.tmdbId || ''),edition:multiEdition(candidate),language:multiLanguage(candidate),context:fusionDigest(JSON.stringify([identity.tmdb_id || '',identity.year || '',identity.version_key || '',multiEdition(params),multiLanguage(params)]))};
 }
 function multiSameWork(a,b){return a && b && a.title===b.title && a.year===b.year && a.kind===b.kind && a.season===b.season && !(a.tmdb && b.tmdb && a.tmdb!==b.tmdb) && a.edition===b.edition && a.language===b.language;}
 function multiEdition(value){
@@ -158,10 +167,13 @@ async function fusionMultiSearch(params){
         entries.push({cfg:cfg,c:c,e:multiEvidence(c,params)});
       }
     }
-    entries.sort((a,b)=>multiNative(b.c)-multiNative(a.c) || a.cfg.slot-b.cfg.slot);
+    const preferences=await preferenceAccess(sources);
+    entries.sort((a,b)=>Number(preferenceMatches(preferences,b.e,b.cfg.s))-Number(preferenceMatches(preferences,a.e,a.cfg.s)) || multiNative(b.c)-multiNative(a.c) || a.cfg.slot-b.cfg.slot);
     const animes=entries.map(v=>{
-      const id=multiId('a',[multiRef(v.cfg,v.c,v.e)]);
-      return Object.assign({},v.c,{animeId:id,bangumiId:id,animeTitle:v.c.animeTitle+' · API '+v.cfg.slot});
+      const ref=multiRef(v.cfg,v.c,v.e),alternatives=entries.filter(a=>a.cfg.s!==v.cfg.s && multiSameWork(v.e,a.e));
+      ref.a=alternatives.filter((a,i)=>alternatives.findIndex(b=>b.cfg.s===a.cfg.s)===i).slice(0,2).map(a=>multiRef(a.cfg,a.c,a.e));
+      const id=multiId('a',[ref]),preferred=preferenceMatches(preferences,v.e,v.cfg.s);
+      return Object.assign({},v.c,{animeId:id,bangumiId:id,isFavorited:preferred || v.c.isFavorited,animeTitle:(preferred?'上次来源 · ':'')+v.c.animeTitle+' · API '+v.cfg.slot});
     });
     // One best (preferably native merged) candidate from each API per identity.
     // Details decide whether episodes actually have sufficient timeline proof.
@@ -177,9 +189,10 @@ async function fusionMultiSearch(params){
       const id=multiId('a',members.map(v=>multiRef(v.cfg,v.c,v.e)));
       animes.unshift(Object.assign({},root.c,{animeId:id,bangumiId:id,animeTitle:root.c.animeTitle+' · 跨 API 选源（'+members.map(v=>v.cfg.slot).join('+')+'）'}));
     }
+    animes.sort((a,b)=>Number(!!b.isFavorited)-Number(!!a.isFavorited));
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Search APIs available: '+batch.values.filter(v=>v.animes.length).length+'; candidates: '+animes.length+(batch.partial?'; slow peers continue in bounded cache':''));
-    return {animes:animes};
-  }catch(e){compatFailure('Search',e);return {animes:[]};}
+    return animes.length?{animes:animes}:{animes:[],message:'未取得可用作品，请查看诊断后重试或手动搜索',diagnostics:compatSummary()};
+  }catch(e){compatFailure('Search',e);const failure=compatEmpty(e);return {animes:[],message:failure.message,error:failure.error,diagnostics:failure.diagnostics};}
 }
 async function multiDetailOne(ref,cfg,params){
   const selected=await compatRecall(cfg,ref.i);
@@ -227,22 +240,42 @@ async function fusionMultiDetail(params){
       if(episodes.length)await multiBare(sources,'c',episodes.slice(0,2000).map(e=>e.episodeId),true);
       return episodes;
     }
-    const batch=await multiFirst(refs.map(ref=>{
+    const requested=refs.slice();
+    if(refs.length===1 && refs[0].a)for(const alt of refs[0].a)if(multiSameWork(refs[0].e,alt.e))requested.push(alt);
+    const batch=await multiFirst(requested.map(ref=>{
       const cfg=sources.find(c=>c.s===ref.s);
       return multiJob(cfg,'detail:'+fusionDigest(JSON.stringify(ref)),async()=>({ref:ref,episodes:(await multiDetailOne(ref,cfg,params)).slice(0,2000)}));
-    }),v=>v.episodes.length>0);
+    }),v=>v.episodes.length>0 && refs.some(r=>r.s===v.ref.s));
     const entries=[];
-    for(const ref of refs){
+    for(const ref of requested){
       const result=batch.values.find(v=>v.ref.s===ref.s);if(!result)continue;
       const cfg=sources.find(c=>c.s===ref.s);
       for(const e of result.episodes){
         if(!multiRawId(e.episodeId))continue;
-        entries.push({cfg:cfg,e:e,proof:multiEpisodeProof(e,ref.e)});
+        entries.push({cfg:cfg,e:e,work:ref.e,proof:multiEpisodeProof(e,ref.e)});
       }
     }
-    const episodes=entries.map(v=>Object.assign({},v.e,{episodeId:multiId('c',[{s:v.cfg.s,i:v.e.episodeId}]),episodeTitle:v.e.episodeTitle+' · API '+v.cfg.slot}));
+    // Index exact proof buckets once. TMDB conflicts are still checked below;
+    // duplicate episode numbers per API are counted before recommending backups.
+    const proofBuckets=new Map();
+    const proofKey=p=>p && JSON.stringify([p.work.title,p.work.year,p.work.kind,p.work.season,p.work.edition,p.work.language,p.number,p.duration,p.timeline,p.edition,p.language]);
+    for(const entry of entries){
+      const key=proofKey(entry.proof);if(!key)continue;
+      if(!proofBuckets.has(key))proofBuckets.set(key,{members:[],counts:new Map()});
+      const bucket=proofBuckets.get(key);bucket.members.push(entry);bucket.counts.set(entry.cfg.s,(bucket.counts.get(entry.cfg.s) || 0)+1);
+    }
+    const episodes=entries.filter(v=>refs.some(r=>r.s===v.cfg.s)).map(v=>{
+      const ref={s:v.cfg.s,i:v.e.episodeId,e:v.work,p:v.proof};
+      // Duplicate episode numbers within an API are ambiguous, even if hashes
+      // happen to agree. Never pick an alternative by array position.
+      const bucket=proofBuckets.get(proofKey(v.proof));
+      if(bucket && bucket.counts.get(v.cfg.s)===1){
+        ref.a=bucket.members.filter(a=>a.cfg.s!==v.cfg.s && bucket.counts.get(a.cfg.s)===1 && multiSameEpisode(v.proof,a.proof)).slice(0,2).map(a=>({s:a.cfg.s,i:a.e.episodeId,p:a.proof}));
+      }
+      return Object.assign({},v.e,{episodeId:multiId('c',[ref]),episodeTitle:v.e.episodeTitle+' · API '+v.cfg.slot});
+    });
     const used=new Set();
-    for(let i=0;i<entries.length;i++){
+    for(let i=0;refs.length>1 && i<entries.length;i++){
       if(used.has(i))continue;const root=entries[i],members=[root];
       for(let j=i+1;j<entries.length;j++){
         const v=entries[j];if(members.some(m=>m.cfg.s===v.cfg.s) || !members.every(m=>multiSameEpisode(m.proof,v.proof)))continue;
@@ -251,6 +284,7 @@ async function fusionMultiDetail(params){
       if(members.length<2)continue;
       episodes.unshift(Object.assign({},root.e,{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof}))),episodeTitle:root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
     }
+    if(refs.length>1 && !episodes.some(e=>e.episodeTitle.includes('安全聚合')))compatLog('Route','UNPROVEN_TIMELINE','Choose independent source');
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Returning routed episodes: '+episodes.length);
     return episodes;
   }catch(e){compatFailure('Detail',e);return [];}
@@ -288,6 +322,7 @@ async function fusionMultiComments(params,progress){
       if(compatPresent(id))await multiBare(sources,'c',id,false);
       return fusionCompatComments(multiParams(params,sources[0]),progress);
     }
+    if(refs.length===1)return await multiSelectedComments(params,progress,sources,refs[0]);
     if(refs.length>1 && (!refs[0].p || !refs.every(r=>multiSameEpisode(refs[0].p,r.p))))throw compatError('Route','UNPROVEN_TIMELINE','Historical aggregate lacks timeline evidence; select an individual source');
     const batch=await multiFirst(refs.map(async ref=>{
       const cfg=sources.find(c=>c.s===ref.s),data=await fusionCompatComments(Object.assign(multiParams(params,cfg),{commentId:ref.i,episodeId:ref.i}),progress);
@@ -304,5 +339,40 @@ async function fusionMultiComments(params,progress){
     if(usable.length>1)return multiMerge(usable);
     if(usable.length===1)return refs.length>1?multiMerge(usable):usable[0].data;
     return values.length?values[0].data:{comments:[],count:0,success:false};
-  }catch(e){compatFailure('Comments',e);return {comments:[],count:0,success:false};}
+  }catch(e){compatFailure('Comments',e);return compatEmpty(e);}
+}
+
+function multiResponseMatches(data,proof){
+  return !proof || !(multiDuration(data)!=null && multiDuration(data)!==proof.duration || multiTimeline(data)!=null && multiTimeline(data)!==proof.timeline || multiEdition(data) && multiEdition(data)!==proof.edition || multiLanguage(data) && multiLanguage(data)!==proof.language);
+}
+async function multiSelectedComments(params,progress,sources,ref){
+  const load=async member=>{
+    const cfg=sources.find(c=>c.s===member.s);
+    const data=await fusionCompatComments(Object.assign(multiParams(params,cfg),{commentId:member.i,episodeId:member.i}),progress);
+    if(!multiResponseMatches(data,member.p)){
+      const error=compatError('Route','TIMELINE_CHANGED','Server video version changed');compatFailure('Route',error);return compatEmpty(error);
+    }
+    return data;
+  };
+  const primary=await load(ref);
+  // A valid empty progress window is success, not evidence that a track failed.
+  if(primary.success!==false && !primary.taskId && (primary.count>0 || progress)){
+    if(primary.count>0)await preferenceSelect(sources,ref);
+    return primary;
+  }
+  const alternatives=(ref.a || []).filter(a=>multiSameEpisode(ref.p,a.p));
+  if(!alternatives.length){
+    if(ref.a && ref.a.length)compatLog('Fallback','UNPROVEN_TIMELINE','Unverified fallback rejected');
+    return primary;
+  }
+  const original=primary.error || {code:primary.taskId?'PENDING_TASK':'NO_COMMENTS',category:primary.taskId?'PENDING_TASK':'NO_COMMENTS'};
+  // At most two, each attempted once. No recursion, cycles, offsets or merging.
+  for(const alternative of alternatives){
+    const data=await load(alternative);
+    if(data.success===false || data.taskId || !data.count && !progress)continue;
+    compatLog('Fallback','FALLBACK_USED','Verified fallback used');
+    return Object.assign({},data,{message:compatMessage('FALLBACK_USED'),fallback:{original:original,from:sources.find(c=>c.s===ref.s).slot,to:sources.find(c=>c.s===alternative.s).slot},diagnostics:compatSummary()});
+  }
+  compatLog('Fallback','FALLBACK_FAILED','No healthy verified fallback');
+  return Object.assign({},primary,{diagnostics:compatSummary()});
 }

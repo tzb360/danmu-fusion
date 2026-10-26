@@ -1,0 +1,115 @@
+{
+  "version": "1.5.1",
+  "kind": "real configured HTTP APIs through timer-free Widget VM",
+  "bundleSha256": "64bd73198fad91ed7fb3a0be15e15b35fa71de242c819299b3d0614e1201c037",
+  "startedAt": "2026-10-26T05:15:14.450Z",
+  "finishedAt": "2026-10-26T05:16:39.262Z",
+  "cases": [
+    {
+      "configured": 3,
+      "firstSearchMs": 918,
+      "firstCandidates": 3,
+      "candidates": 8,
+      "firstReturnWasPartial": true,
+      "elapsedMs": 84805,
+      "requests": 12,
+      "sources": [
+        {
+          "source": 1,
+          "status": "passed",
+          "count": 51624,
+          "commentMs": 8242,
+          "sequenceSha256": "571b463de90738837592ee9064951e138cda61a28c4e26c47634363efb669881"
+        },
+        {
+          "source": 2,
+          "status": "passed",
+          "count": 26168,
+          "commentMs": 4644,
+          "sequenceSha256": "db64ef5b7a5ce0fe0891074aab07fd603d8aa42e60f75aa4048577d4deff4a3c"
+        },
+        {
+          "source": 3,
+          "status": "passed",
+          "count": 15214,
+          "commentMs": 804,
+          "sequenceSha256": "9fd4333477933734910451fc1599a926ce9fd5c643a2749db87fc9fc08e8908d"
+        }
+      ],
+      "timings": [
+        {
+          "source": 3,
+          "stage": "search",
+          "status": 200,
+          "ms": 883
+        },
+        {
+          "source": 2,
+          "stage": "search",
+          "status": 200,
+          "ms": 37762
+        },
+        {
+          "source": 1,
+          "stage": "search",
+          "status": 200,
+          "ms": 67277
+        },
+        {
+          "source": 1,
+          "stage": "detail",
+          "status": 200,
+          "ms": 274
+        },
+        {
+          "source": 2,
+          "stage": "detail",
+          "status": 200,
+          "ms": 476
+        },
+        {
+          "source": 3,
+          "stage": "detail",
+          "status": 200,
+          "ms": 857
+        },
+        {
+          "source": 1,
+          "stage": "comments",
+          "status": 200,
+          "ms": 8085
+        },
+        {
+          "source": 1,
+          "stage": "detail",
+          "status": 200,
+          "ms": 281
+        },
+        {
+          "source": 2,
+          "stage": "detail",
+          "status": 200,
+          "ms": 544
+        },
+        {
+          "source": 2,
+          "stage": "comments",
+          "status": 200,
+          "ms": 4558
+        },
+        {
+          "source": 3,
+          "stage": "detail",
+          "status": 200,
+          "ms": 2966
+        },
+        {
+          "source": 3,
+          "stage": "comments",
+          "status": 200,
+          "ms": 751
+        }
+      ]
+    }
+  ]
+}
