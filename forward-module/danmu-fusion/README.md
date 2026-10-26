@@ -7,6 +7,7 @@
 1. 导入 [danmu-fusion.js](./danmu-fusion.js)，或使用 [widget.fwd](./widget.fwd) 安装索引。
 2. 「弹幕 API 1（主要接口）」沿用 `danmu_api_url`，原地址自动保留。
 3. 需要时再填写「弹幕 API 2（可选）」和「弹幕 API 3（可选）」，不需要全部填写。
+4. 从旧版升级时更新同 ID 模块，原有三 API 配置保留。升级后重新搜索弹幕，选择带「【聚合】」的资源及对应集数；若播放器仍保留旧列表，可重新进入播放会话。首次冷搜索仍可能缺少晚到 API，详情见下文。
 
 模块 ID 仍是 `tzb360.danmu.fusion`。界面只有三个地址输入框，没有模式、来源规则、超时或去重等技术设置。Node 部署的安装入口仍为 `https://你的服务器/widgets/danmu-fusion/widget.fwd`。
 
