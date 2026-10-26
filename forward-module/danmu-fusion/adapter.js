@@ -13,6 +13,7 @@ const compatYearMatches=new Map();
 const compatSafeErrors=new WeakSet();
 const compatCommentJobs=new Map();
 const compatValidated=new WeakSet();
+const compatSegmentOutputs=new WeakSet();
 const compatWindows=new WeakMap();
 const compatCounters={validations:0,records:0};
 const compatMatchUnsupported=new Set();
@@ -376,22 +377,23 @@ async function fusionCompatComments(params,progress){
     if(!compatPresent(id))throw compatError('Comments','MISSING_COMMENT_ID','Missing commentId');
     if(compatLegacyId(id))throw compatError('Comments','LEGACY_SELECTION','Legacy automatic selection; select an episode again');
     const cfg=compatConfig(params),key=compatPlaybackKey(cfg,params,id);
-    let data=await compatLoadComments(cfg,params,id,key);
+    let data=await compatLoadComments(cfg,params,id,key),segmented=false;
     if(compatStage>=6 && Array.isArray(data.barrage_list) && data.barrage_list.length && (!Array.isArray(data.comments) || !data.comments.length)){
       const time=Number(params.segmentTime || 0);
       if(!Number.isFinite(time) || time<0)throw compatError('Comments','INVALID_PROGRESS','Invalid segmentTime');
       const segment=data.barrage_list.find(s=>s && time>=Number(s.segment_start) && time<Number(s.segment_end));
-      if(!segment){compatLog('Segment','EMPTY','No segment at requested time');return {comments:[],count:0};}
+      if(!segment){compatLog('Segment','EMPTY','No segment at requested time');const output={comments:[],count:0};compatSegmentOutputs.add(output);return output;}
       if(!/^https?:\/\//i.test(String(segment.segment_url || '')))throw compatError('Segment','INVALID_URL','Invalid segment URL');
       const segmentKey=key+':segment:'+fusionDigest(JSON.stringify(segment));
       let fragment=compatRead(segmentKey,true);
       if(!fragment){fragment=await compatHttp(cfg,segment.segment_url,'Segment');if(Array.isArray(fragment))fragment={comments:fragment};fragment=compatCommentsResult(fragment,false,params);compatSave(segmentKey,fragment,true);}
-      data=fragment;
+      data=fragment;segmented=true;
     }
     const result=compatCommentsResult(data,!!progress && params.segmentTime!=null,params);
     if(!result.count && !progress && !result.taskId)compatLog('Comments','NO_COMMENTS','No comments in current episode');
     compatLog('Comments','RETURN','Returning response.data comments: '+result.count);
     const output=compatCopy(result);
+    if(segmented)compatSegmentOutputs.add(output);
     for(const field of ['error','message','diagnostics','diagnostic','headers','request','config','authorization','Authorization'])delete output[field];
     if(!output.count && !progress){output.message=compatMessage(output.taskId?'PENDING_TASK':'NO_COMMENTS');output.diagnostics=compatSummary();}
     return output;

@@ -79,6 +79,7 @@ function multiDecode(id,kind,sources){
 function multiRef(cfg,candidate,evidence){
   if(!multiRawId(candidate.animeId))throw compatError('Route','INVALID_ID','Unsupported server resource ID');
   const ref={s:cfg.s,i:candidate.animeId};
+  if(multiNative(candidate))ref.n=1;
   if(multiRawId(candidate.bangumiId))ref.b=candidate.bangumiId;
   if(evidence)ref.e=evidence;
   return ref;
@@ -120,6 +121,11 @@ async function multiFirst(tasks,usable){
   const values=states.filter(s=>s.done && s.value).map(s=>s.value);
   accepting=false;states.length=0;tasks.length=0;
   return {values:values,partial:remaining>0};
+}
+async function multiComplete(tasks){
+  const values=[];
+  await Promise.all(tasks.map(async task=>{try{const value=await task;if(value)values.push(value);}catch(e){compatFailure('MultiAPI',e);}}));
+  return {values:values,partial:false};
 }
 async function multiJob(cfg,key,loader){
   const cacheKey=compatKey(cfg,'multi:'+key),cached=compatRead(cacheKey);
@@ -191,7 +197,7 @@ function multiEdition(value){
   return fusionNormalize(explicit || tag && tag[0] || '').toLowerCase();
 }
 function multiLanguage(value){return fusionNormalize(value.language || value.audioLanguage || '').toLowerCase();}
-async function fusionMultiSearch(params){
+async function fusionMultiSearch(params,preferNative){
   try{
     const sources=multiSources(params);
     if(sources.length===1 && sources[0].slot===1){
@@ -202,7 +208,7 @@ async function fusionMultiSearch(params){
     const query=fusionDigest(JSON.stringify([fusionIdentity(params),params.title,params.keyword,params.seriesName]));
     const pending=multiFirst(sources.map(cfg=>multiJob(cfg,'search:'+query,async()=>{
       const result=await fusionCompatSearch(multiParams(params,cfg));return {s:cfg.s,animes:result.animes.slice(0,32)};
-    })),v=>v.animes.length>0);
+    })),v=>preferNative?v.animes.some(multiNative):v.animes.length>0);
     const [batch,hints]=await Promise.all([pending,multiNativeHints(sources,params)]);
     // A completed fresh response is authoritative, including a valid empty one.
     // Hints fill only APIs absent from this first batch, never override it.
@@ -286,7 +292,7 @@ function multiEpisodeProof(episode,evidence){
   return {work:evidence,number:number,duration:duration,timeline:timeline,edition:edition,language:language};
 }
 function multiSameEpisode(a,b){return a && b && multiSameWork(a.work,b.work) && a.number===b.number && a.duration===b.duration && a.timeline===b.timeline && a.edition===b.edition && a.language===b.language;}
-async function fusionMultiDetail(params){
+async function fusionMultiDetail(params,complete){
   try{
     const sources=multiSources(params),refs=multiDecode(params.animeId,'a',sources);
     if(!refs){
@@ -297,7 +303,8 @@ async function fusionMultiDetail(params){
     }
     const requested=refs.slice();
     if(refs.length===1 && refs[0].a)for(const alt of refs[0].a)if(multiSameWork(refs[0].e,alt.e))requested.push(alt);
-    const batch=await multiFirst(requested.map(ref=>{
+    const collect=complete && refs.length>1?multiComplete:multiFirst;
+    const batch=await collect(requested.map(ref=>{
       const cfg=sources.find(c=>c.s===ref.s);
       return multiJob(cfg,'detail:'+fusionDigest(JSON.stringify(ref)),async()=>({ref:ref,episodes:(await multiDetailOne(ref,cfg,params)).slice(0,2000)}));
     }),v=>v.episodes.length>0 && refs.some(r=>r.s===v.ref.s));
@@ -320,7 +327,7 @@ async function fusionMultiDetail(params){
       const bucket=proofBuckets.get(key);bucket.members.push(entry);bucket.counts.set(entry.cfg.s,(bucket.counts.get(entry.cfg.s) || 0)+1);
     }
     const episodes=entries.filter(v=>refs.some(r=>r.s===v.cfg.s)).map(v=>{
-      const ref={s:v.cfg.s,i:v.e.episodeId,e:v.work,p:v.proof};
+      const ref={s:v.cfg.s,i:v.e.episodeId,e:v.work,p:v.proof,u:aggregateEpisodeCodes(v.e)};
       // Duplicate episode numbers within an API are ambiguous, even if hashes
       // happen to agree. Never pick an alternative by array position.
       const bucket=proofBuckets.get(proofKey(v.proof));
@@ -338,7 +345,7 @@ async function fusionMultiDetail(params){
         members.push(v);used.add(j);
       }
       if(members.length<2)continue;
-      episodes.unshift(Object.assign({},multiAggregateDisplay(root.e,'episodeTitle'),{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof}))),episodeTitle:'【聚合】'+root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
+      episodes.unshift(Object.assign({},multiAggregateDisplay(root.e,'episodeTitle'),{episodeId:multiId('c',members.map(v=>({s:v.cfg.s,i:v.e.episodeId,p:v.proof,u:aggregateEpisodeCodes(v.e)}))),episodeTitle:'【聚合】'+root.e.episodeTitle+' · 安全聚合 API '+members.map(v=>v.cfg.slot).join('+')}));
     }
     if(refs.length>1 && !episodes.some(e=>e.episodeTitle.includes('安全聚合')))compatLog('Route','UNPROVEN_TIMELINE','Choose independent source');
     compatLog('MultiAPI',batch.partial?'PARTIAL':'COMPLETE','Returning routed episodes: '+episodes.length);
@@ -369,7 +376,9 @@ function multiMerge(values){
   }
   compatLog('MultiAPI','MERGED','Merged APIs: '+values.length+'; exact upstream replays removed: '+removed+'; returned: '+comments.length);
   comments.sort((a,b)=>parseFloat(a.p)-parseFloat(b.p));
-  return {comments:comments,count:comments.length};
+  const result={comments:comments,count:comments.length};
+  if(values.some(v=>compatSegmentOutputs.has(v.data)))compatSegmentOutputs.add(result);
+  return result;
 }
 async function fusionMultiComments(params,progress){
   try{
@@ -380,7 +389,8 @@ async function fusionMultiComments(params,progress){
     }
     if(refs.length===1)return await multiSelectedComments(params,progress,sources,refs[0]);
     if(refs.length>1 && (!refs[0].p || !refs.every(r=>multiSameEpisode(refs[0].p,r.p))))throw compatError('Route','UNPROVEN_TIMELINE','Historical aggregate lacks timeline evidence; select an individual source');
-    const batch=await multiFirst(refs.map(async ref=>{
+    const collect=refs.every(r=>r.g===1)?multiComplete:multiFirst;
+    const batch=await collect(refs.map(async ref=>{
       const cfg=sources.find(c=>c.s===ref.s),data=await fusionCompatComments(Object.assign(multiParams(params,cfg),{commentId:ref.i,episodeId:ref.i}),progress);
       // A server which now explicitly reports another duration/hash/version
       // invalidates the earlier proof. Never apply offsets or silently mix it.
@@ -412,7 +422,7 @@ async function multiSelectedComments(params,progress,sources,ref){
   };
   const primary=await load(ref);
   // A valid empty progress window is success, not evidence that a track failed.
-  if(primary.success!==false && !primary.taskId && (primary.count>0 || progress)){
+  if(primary.success!==false && !primary.taskId && (primary.count>0 || progress || compatSegmentOutputs.has(primary))){
     if(primary.count>0)await preferenceSelect(sources,ref);
     return primary;
   }

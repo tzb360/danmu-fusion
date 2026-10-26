@@ -1,3 +1,4 @@
+import { strictNativePools } from '../aggregation/strict-source-match.js';
 import { globals } from '../configs/globals.js';
 import { log as baseLog } from './log-util.js';
 import { addAnime } from './cache-util.js';
@@ -2976,6 +2977,15 @@ async function processMergeTask(params) {
  * @returns {Promise<void>}
  */
 export async function applyMergeLogic(curAnimes, detailStore = null) {
+    if (Array.isArray(curAnimes) && !(globals.customMergeRules || []).length) {
+        const dynamic = strictNativePools(curAnimes, globals.mergeSourcePairs || [],
+            anime => globals.animes.find(a => String(a.animeId) === String(anime.animeId) && a.source === anime.source) || anime,
+            members => generateSafeMergedId(members[0].animeId, members.slice(1).map(a => a.animeId).join('|'), 'strict-episode-union-v1'));
+        log('info', '[merge][strict-episode-union] pools: ' + dynamic.pools.length + '; episodes: ' + dynamic.pools.reduce((n, a) => n + a.links.length, 0));
+        for (const anime of dynamic.pools) addAnime(anime, detailStore);
+        curAnimes.splice(0, curAnimes.length, ...dynamic.pools, ...dynamic.remaining);
+        return;
+    }
     if (!curAnimes || curAnimes.length < 2) return;
 
     // 获取常规配置与映射表配置

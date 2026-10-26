@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import {nativeRuntime,media,standardFixture} from './native-test-support.mjs';
+import {compatibilityRuntime as nativeRuntime,media,standardFixture} from './native-test-support.mjs';
 const urls=['https://one.example/proxy/Secret%2FONE/api/v2','https://two.example/Token-TWO','https://three.example/Token-THREE'];
 const config={danmu_api_url:urls[0],danmu_api_url_2:urls[1],danmu_api_url_3:urls[2]};
 const params={...media,...config};
@@ -29,7 +29,7 @@ test('public metadata exposes three address inputs and preserves upgrade key and
   assert.deepEqual(Array.from(app.metadata.globalParams,p=>p.name),['danmu_api_url','danmu_api_url_2','danmu_api_url_3']);
   assert.ok(app.metadata.globalParams.every(p=>p.type==='input'));
   assert.ok(app.metadata.modules.every(m=>m.params.length===0 && m.cacheDuration===0));
-  assert.equal(app.metadata.version,'1.5.2');assert.equal(app.metadata.id,'tzb360.danmu.fusion');
+  assert.equal(app.metadata.version,'1.5.3');assert.equal(app.metadata.id,'tzb360.danmu.fusion');
   for(const key of ['setTimeout','fetch','URL','AbortController','Buffer','process'])assert.equal(app.sandbox[key],undefined);
 });
 test('one API, empty optional slots and legacy server alias retain real IDs and comment-only playback',async()=>{

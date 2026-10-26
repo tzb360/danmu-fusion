@@ -10,9 +10,10 @@ const core=chinese+'\n'+fs.readFileSync(root+'danmu_api/aggregation/forward-core
 const transport=fs.readFileSync(root+'forward-module/danmu-fusion/transport.js','utf8');
 const preferences=fs.readFileSync(root+'forward-module/danmu-fusion/preferences.js','utf8');
 const multi=fs.readFileSync(root+'forward-module/danmu-fusion/multi-api.js','utf8');
+const presentation=fs.readFileSync(root+'forward-module/danmu-fusion/aggregate-ui.js','utf8');
 const adapter=fs.readFileSync(root+'forward-module/danmu-fusion/adapter.js','utf8');
 let source=fs.readFileSync(target,'utf8');
-const block=(start+'\n'+core+'\n'+transport+'\n'+adapter+'\n'+preferences+'\n'+multi+'\n'+end).split('\n').map(line=>line.trimEnd()).join('\n');
+const block=(start+'\n'+core+'\n'+transport+'\n'+adapter+'\n'+preferences+'\n'+multi+'\n'+presentation+'\n'+end).split('\n').map(line=>line.trimEnd()).join('\n');
 if (source.includes(start)) source=source.slice(0,source.indexOf(start))+block+source.slice(source.indexOf(end)+end.length);
 else source=source.replace('if (typeof module !== "undefined" && module.exports)',()=>block+'\n\nif (typeof module !== "undefined" && module.exports)');
 new vm.Script(source,{filename:'danmu-fusion.js'});

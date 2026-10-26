@@ -1,0 +1,45 @@
+{
+  "environment": {
+    "runtime": "v24.19.0",
+    "cpu": "Apple M2"
+  },
+  "method": "Fresh process per size, one sample; fixed Mock JSON; public metadata entry points; sampled memory after callbacks, not allocation peak. Includes current-episode preflight. Not iPhone performance.",
+  "results": [
+    {
+      "version": "1.5.3",
+      "mock": true,
+      "rows": 4000,
+      "searchIncludingPreflightMs": 57.18,
+      "totalIncludingPlaybackAndThreeSeeksMs": 72.21,
+      "commentRequests": 1,
+      "observedHeapMiB": 10.14,
+      "retainedHeapDeltaMiB": 1.08,
+      "cache": {
+        "entries": 1,
+        "bytes": 1120884,
+        "pending": 0,
+        "commentJobs": 0,
+        "validations": 1,
+        "records": 4000
+      }
+    },
+    {
+      "version": "1.5.3",
+      "mock": true,
+      "rows": 220001,
+      "searchIncludingPreflightMs": 1421.03,
+      "totalIncludingPlaybackAndThreeSeeksMs": 5863.61,
+      "commentRequests": 5,
+      "observedHeapMiB": 154.92,
+      "retainedHeapDeltaMiB": 1.31,
+      "cache": {
+        "entries": 0,
+        "bytes": 0,
+        "pending": 0,
+        "commentJobs": 0,
+        "validations": 5,
+        "records": 1100005
+      }
+    }
+  ]
+}

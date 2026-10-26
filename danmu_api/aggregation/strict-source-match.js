@@ -69,3 +69,64 @@ export function strictMergeEpisodePairAllowed(primary,secondary,parent){
   const a=episodeNumber(primary),b=episodeNumber(secondary);
   return a!=null && b!=null && a===b && a>0;
 }
+
+// Build each episode from its own available resources. A primary provider is
+// ordering preference only: its missing episode never removes another pair.
+export function strictNativePools(animes,groups,resolve,makeId){
+  const pools=[],consumed=new Set();
+  const source=value=>String(value || '').toLowerCase();
+  const strip=value=>text(value).replace(/^(?:【[^】]*】|\[[^\]]*\])\s*/,'');
+  const episodeKey=(link,parent,total)=>{
+    if(!strictMergeEpisodeAllowed(link) || !link.url || String(link.url).includes('$$$'))return null;
+    const shape=titleShape(parent),title=strip(link.title || link.name),edition=versions(title);
+    if(edition && edition!==shape.version)return null;
+    if(shape.kind==='movie'){
+      const clean=title.replace(/\((?:19|20)\d{2}\)/g,'').replace(/[\s.,，。:：;；!?！？、'"《》()·_\-]/g,'').toLowerCase();
+      if(!/^(?:第[一1]集)?(?:正片|全片)$/.test(clean) && clean!==shape.title && !(total===1 && /^(?:[0-9]{3,4}p|[24]k|hd|bd|dvd|sd|fhd|uhd|蓝光|超清|高清|标清)$/i.test(clean)))return null;
+      return 'movie';
+    }
+    const season=title.match(/第\s*([零〇一二两三四五六七八九十\d]+)\s*季|\bS(\d{1,2})(?:E\d+)?\b/i);
+    if(season && number(season[1] || season[2])!==shape.season)return null;
+    const n=episodeNumber(link);return n>0?'episode:'+n:null;
+  };
+  for(const group of groups || []){
+    const order=Array.from(new Set([group.primary].concat(group.secondaries || []).map(source).filter(Boolean)));
+    if(order.length<2)continue;
+    const candidates=animes.filter(a=>a && !consumed.has(a) && order.includes(source(a.source)) && strictNativeMergeMatch(a,a));
+    const used=new Set();
+    for(const root of candidates){
+      if(used.has(root))continue;
+      const members=[root];
+      for(const candidate of candidates)if(candidate!==root && !used.has(candidate) && members.every(a=>strictNativeMergeMatch(a,candidate)))members.push(candidate);
+      if(new Set(members.map(a=>source(a.source))).size<2)continue;
+      members.sort((a,b)=>order.indexOf(source(a.source))-order.indexOf(source(b.source)) || String(a.animeId).localeCompare(String(b.animeId)));
+      const buckets=new Map();
+      for(const member of members){
+        const actual=resolve(member) || member,byKey=new Map();
+        for(const link of actual.links || []){
+          const key=episodeKey(link,member,(actual.links || []).length);if(!key)continue;
+          if(!byKey.has(key))byKey.set(key,[]);
+          const list=byKey.get(key);if(!list.some(l=>l.url===link.url))list.push(link);
+        }
+        // Multiple distinct entries for one episode within one resource are
+        // ambiguous. Never guess by array order, a title suffix or old episode.
+        for(const [key,list] of byKey)if(list.length===1){
+          if(!buckets.has(key))buckets.set(key,[]);
+          const entries=buckets.get(key),provider=source(member.source),link=list[0];
+          const url=String(link.url).startsWith(provider+':')?String(link.url):provider+':'+String(link.url);
+          if(!entries.some(e=>e.url===url))entries.push({provider,url,link});
+        }
+      }
+      if(!Array.from(buckets.values()).some(entries=>new Set(entries.map(e=>e.provider)).size>=2))continue;
+      const links=Array.from(buckets).sort((a,b)=>Number(a[0].split(':')[1] || 0)-Number(b[0].split(':')[1] || 0)).map(([key,entries])=>{
+        const providers=Array.from(new Set(entries.map(e=>e.provider)));
+        return {...entries[0].link,title:'【'+providers.join('&')+'】 '+strip(entries[0].link.title || entries[0].link.name),url:entries.length===1?String(entries[0].link.url):entries.map(e=>e.url).join('$$$')};
+      });
+      const providers=Array.from(new Set(members.map(a=>source(a.source)))),base=members[0];
+      const pool={...base,animeId:makeId(members),animeTitle:String(base.animeTitle).replace(/\s+from\s+.*$/i,'')+' from '+providers.join('&'),links,
+        mergedChildren:members.slice(1).map(a=>({animeId:a.animeId,animeTitle:a.animeTitle,source:a.source})),source:base.source};
+      pools.push(pool);members.forEach(a=>{used.add(a);consumed.add(a);});
+    }
+  }
+  return {pools,remaining:animes.filter(a=>!consumed.has(a))};
+}

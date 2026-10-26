@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {nativeRuntime,media} from './native-test-support.mjs';
+import {compatibilityRuntime as nativeRuntime,media} from './native-test-support.mjs';
 const config={danmu_api_url:'https://one.example/private-one',danmu_api_url_2:'https://two.example/private-two'};
 const params={...media,...config},tick=()=>new Promise(setImmediate);
 const candidate={animeId:42,animeTitle:'测试剧 S02 (2024) from tencent&iqiyi&aiyifan',type:'tvseries',source:'tencent',startDate:'2024-01-01',mergedChildren:[{source:'iqiyi',animeId:2},{source:'aiyifan',animeId:3}]};

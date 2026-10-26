@@ -45,3 +45,11 @@ export function standardFixture({empty=false,duplicates=false,alternate=false}={
     return {statusCode:404,data:{success:false}};
   };
 }
+
+// Historic routing/adapter regressions intentionally exercise the compatibility
+// entry points; aggregate-ui.test.mjs covers the current public presentation.
+export function compatibilityRuntime(handler,options){
+ const app=nativeRuntime(handler,options),invoke=app.invoke;
+ app.invoke=(id,p)=>id==='searchDanmu'?app.exports._test.fusionMultiSearch(p):id==='getDetail'?app.exports._test.fusionMultiDetail(p):id==='getComments'?app.exports._test.fusionMultiComments(p,false):id==='getDanmuWithSegmentTime'?app.exports._test.fusionMultiComments(p,true):invoke(id,p);
+ return app;
+}

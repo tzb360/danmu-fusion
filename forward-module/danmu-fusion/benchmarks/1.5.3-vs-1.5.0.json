@@ -1,0 +1,528 @@
+{
+  "environment": {
+    "runtime": "v24.19.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M2"
+  },
+  "method": "Fresh Node process per sample; deterministic JSON HTTP; median of 3 by default; observed memory samples after each callback, not allocation peak; GC retained heap includes VM and cache. Mock VM, not real device.",
+  "baseline": "v1.5.0 d7815cc",
+  "bundles": {
+    "1.5.0": "1f8310aa7e84d0c6e1be3858b9656ab5eca9f68cb3e34284ecd62a702877ed24",
+    "1.5.3": "e509610d4d78d2008d37b1dcc6f8a0c80591e7380f58774a191ab6cb9e75c629"
+  },
+  "results": [
+    {
+      "version": "1.5.0",
+      "scenario": "cacheable-seeks",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 38.95,
+      "repeatMs": 1673.45,
+      "requests": 1,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 24.06,
+      "retainedHeapDeltaMiB": 0.83,
+      "observedPeakRssMiB": 95.42,
+      "runs": [
+        {
+          "version": "1.5.0",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 38.953542,
+          "repeatMs": 1631.7099580000001,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.075515747070312,
+          "retainedHeapDeltaMiB": 0.8275604248046875,
+          "observedPeakRssMiB": 95.59375
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 32.698417000000006,
+          "repeatMs": 1673.445416,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.052017211914062,
+          "retainedHeapDeltaMiB": 0.8271408081054688,
+          "observedPeakRssMiB": 85.578125
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 44.83958399999999,
+          "repeatMs": 1903.005833,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.05614471435547,
+          "retainedHeapDeltaMiB": 0.8284454345703125,
+          "observedPeakRssMiB": 95.421875
+        }
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "scenario": "cacheable-seeks",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 40.13,
+      "repeatMs": 203.23,
+      "requests": 1,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 11.62,
+      "retainedHeapDeltaMiB": 0.99,
+      "observedPeakRssMiB": 69.72,
+      "runs": [
+        {
+          "version": "1.5.3",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 31.93629200000001,
+          "repeatMs": 194.93295799999999,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 11.622222900390625,
+          "retainedHeapDeltaMiB": 0.9909591674804688,
+          "observedPeakRssMiB": 69.71875,
+          "cache": {
+            "entries": 1,
+            "bytes": 1032924,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 1,
+            "records": 4000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 44.25762499999999,
+          "repeatMs": 203.22554200000002,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 11.590347290039062,
+          "retainedHeapDeltaMiB": 0.9910888671875,
+          "observedPeakRssMiB": 69.65625,
+          "cache": {
+            "entries": 1,
+            "bytes": 1032924,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 1,
+            "records": 4000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "cacheable-seeks",
+          "rows": 4000,
+          "firstMs": 40.13008400000001,
+          "repeatMs": 206.40312499999996,
+          "requests": 1,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 11.638427734375,
+          "retainedHeapDeltaMiB": 0.99066162109375,
+          "observedPeakRssMiB": 69.71875,
+          "cache": {
+            "entries": 1,
+            "bytes": 1032924,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 1,
+            "records": 4000
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "scenario": "large-track",
+      "mock": true,
+      "rows": 220001,
+      "samples": 3,
+      "firstMs": 1717.86,
+      "repeatMs": 5621.9,
+      "requests": 4,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 274.49,
+      "retainedHeapDeltaMiB": 0.56,
+      "observedPeakRssMiB": 468.31,
+      "runs": [
+        {
+          "version": "1.5.0",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 1717.864709,
+          "repeatMs": 4769.024625,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 274.4445495605469,
+          "retainedHeapDeltaMiB": 0.5552520751953125,
+          "observedPeakRssMiB": 482.640625
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 1338.958458,
+          "repeatMs": 6858.111207999999,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 274.48985290527344,
+          "retainedHeapDeltaMiB": 0.55523681640625,
+          "observedPeakRssMiB": 384.75
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 2356.176167,
+          "repeatMs": 5621.904042,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 274.5295867919922,
+          "retainedHeapDeltaMiB": 0.5552520751953125,
+          "observedPeakRssMiB": 468.3125
+        }
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "scenario": "large-track",
+      "mock": true,
+      "rows": 220001,
+      "samples": 3,
+      "firstMs": 1145.64,
+      "repeatMs": 3221.12,
+      "requests": 4,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 278.66,
+      "retainedHeapDeltaMiB": 0.56,
+      "observedPeakRssMiB": 382.48,
+      "runs": [
+        {
+          "version": "1.5.3",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 848.872458,
+          "repeatMs": 2514.7077090000002,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 278.6500930786133,
+          "retainedHeapDeltaMiB": 0.5630111694335938,
+          "observedPeakRssMiB": 492.734375,
+          "cache": {
+            "entries": 0,
+            "bytes": 0,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 4,
+            "records": 880004
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 1145.6378750000001,
+          "repeatMs": 3221.1190829999996,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 278.7312698364258,
+          "retainedHeapDeltaMiB": 0.5630111694335938,
+          "observedPeakRssMiB": 382.484375,
+          "cache": {
+            "entries": 0,
+            "bytes": 0,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 4,
+            "records": 880004
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "large-track",
+          "rows": 220001,
+          "firstMs": 1518.9986250000002,
+          "repeatMs": 3662.3671669999994,
+          "requests": 4,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 278.6580123901367,
+          "retainedHeapDeltaMiB": 0.5630416870117188,
+          "observedPeakRssMiB": 349.21875,
+          "cache": {
+            "entries": 0,
+            "bytes": 0,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 4,
+            "records": 880004
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "scenario": "concurrent-seeks",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 27.52,
+      "repeatMs": 337.76,
+      "requests": 2,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 24.51,
+      "retainedHeapDeltaMiB": 4.03,
+      "observedPeakRssMiB": 104,
+      "runs": [
+        {
+          "version": "1.5.0",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 27.52087499999999,
+          "repeatMs": 301.125166,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.42021942138672,
+          "retainedHeapDeltaMiB": 4.0343475341796875,
+          "observedPeakRssMiB": 103.703125
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 27.953708999999996,
+          "repeatMs": 383.163209,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.51031494140625,
+          "retainedHeapDeltaMiB": 4.0343475341796875,
+          "observedPeakRssMiB": 104.421875
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 23.289167000000006,
+          "repeatMs": 337.762167,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 24.51031494140625,
+          "retainedHeapDeltaMiB": 4.0343475341796875,
+          "observedPeakRssMiB": 104
+        }
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "scenario": "concurrent-seeks",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 34.57,
+      "repeatMs": 61.61,
+      "requests": 2,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 10.5,
+      "retainedHeapDeltaMiB": 2.85,
+      "observedPeakRssMiB": 70.92,
+      "runs": [
+        {
+          "version": "1.5.3",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 31.621832999999995,
+          "repeatMs": 45.28158400000001,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 10.569831848144531,
+          "retainedHeapDeltaMiB": 2.8483352661132812,
+          "observedPeakRssMiB": 71.234375,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 2,
+            "records": 8000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 39.234375,
+          "repeatMs": 61.606167,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 10.203018188476562,
+          "retainedHeapDeltaMiB": 2.848236083984375,
+          "observedPeakRssMiB": 69.109375,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 2,
+            "records": 8000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "concurrent-seeks",
+          "rows": 4000,
+          "firstMs": 34.565875000000005,
+          "repeatMs": 71.88145800000001,
+          "requests": 2,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 10.500335693359375,
+          "retainedHeapDeltaMiB": 2.8488082885742188,
+          "observedPeakRssMiB": 70.921875,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 2,
+            "records": 8000
+          }
+        }
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "scenario": "continuous-episodes",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 32.21,
+      "repeatMs": 195.15,
+      "requests": 7,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 13.38,
+      "retainedHeapDeltaMiB": 2.26,
+      "observedPeakRssMiB": 72.91,
+      "runs": [
+        {
+          "version": "1.5.0",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 29.173333,
+          "repeatMs": 285.43541600000003,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 13.477996826171875,
+          "retainedHeapDeltaMiB": 2.2565994262695312,
+          "observedPeakRssMiB": 69.734375
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 32.211375000000004,
+          "repeatMs": 195.14887500000003,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 13.380882263183594,
+          "retainedHeapDeltaMiB": 2.2565994262695312,
+          "observedPeakRssMiB": 72.90625
+        },
+        {
+          "version": "1.5.0",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 41.688749999999985,
+          "repeatMs": 165.004333,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 13.328712463378906,
+          "retainedHeapDeltaMiB": 2.2565765380859375,
+          "observedPeakRssMiB": 73.265625
+        }
+      ]
+    },
+    {
+      "version": "1.5.3",
+      "scenario": "continuous-episodes",
+      "mock": true,
+      "rows": 4000,
+      "samples": 3,
+      "firstMs": 42.02,
+      "repeatMs": 165.82,
+      "requests": 7,
+      "duplicateRequests": 0,
+      "observedPeakHeapMiB": 15.43,
+      "retainedHeapDeltaMiB": 1.63,
+      "observedPeakRssMiB": 78.58,
+      "runs": [
+        {
+          "version": "1.5.3",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 50.834833,
+          "repeatMs": 142.756333,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 15.668937683105469,
+          "retainedHeapDeltaMiB": 1.6265335083007812,
+          "observedPeakRssMiB": 78.578125,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 7,
+            "records": 28000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 42.01712500000002,
+          "repeatMs": 168.64687499999997,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 15.433509826660156,
+          "retainedHeapDeltaMiB": 1.6395111083984375,
+          "observedPeakRssMiB": 76.140625,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 7,
+            "records": 28000
+          }
+        },
+        {
+          "version": "1.5.3",
+          "scenario": "continuous-episodes",
+          "rows": 4000,
+          "firstMs": 31.759541999999996,
+          "repeatMs": 165.82016700000003,
+          "requests": 7,
+          "duplicateRequests": 0,
+          "observedPeakHeapMiB": 15.215248107910156,
+          "retainedHeapDeltaMiB": 1.6263809204101562,
+          "observedPeakRssMiB": 78.6875,
+          "cache": {
+            "entries": 2,
+            "bytes": 2065848,
+            "pending": 0,
+            "commentJobs": 0,
+            "validations": 7,
+            "records": 28000
+          }
+        }
+      ]
+    }
+  ]
+}

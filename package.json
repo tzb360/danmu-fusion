@@ -1,13 +1,14 @@
 {
   "name": "danmu-api-server",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "type": "module",
   "description": "A danmu Node.js Express API server",
   "main": "danmu_api/server.js",
   "scripts": {
+    "benchmark:aggregate": "node --expose-gc forward-module/danmu-fusion/benchmark-aggregate.mjs",
     "benchmark:forward": "node --expose-gc forward-module/danmu-fusion/benchmark-1.5.1.mjs",
     "start": "node danmu_api/server.js",
-    "test": "node --test ./danmu_api/*.test.js",
+    "test": "node --test --test-concurrency=1 ./danmu_api/*.test.js",
     "test:aggregation": "node --test ./danmu_api/aggregation.test.js ./danmu_api/episode-aggregate.test.js",
     "build-forward-widget": "node build-forward-widget.js",
     "build:forward-fusion": "node scripts/build-danmu-fusion.mjs",

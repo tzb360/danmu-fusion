@@ -6,7 +6,7 @@ const baseline=new URL('./fixtures/danmu-fusion-1.4.5.js',import.meta.url);
 const p={...media,danmu_api_url:'https://one.example/token'};
 const handler=async(m,u)=>{const host=new URL(u).hostname,ms=host==='two.example'?150:host==='three.example'?60:25;await new Promise(r=>setTimeout(r,ms));return {data:{animes:[{animeId:42,animeTitle:'测试剧 S02 (2024)',type:'tvseries'}]}};};
 const results=[];
-for(const [name,path,count]of [['1.4.5 single',baseline,1],['1.5.2 single',undefined,1],['1.5.2 two',undefined,2],['1.5.2 three',undefined,3]]){
+for(const [name,path,count]of [['1.4.5 single',baseline,1],['1.5.3 single',undefined,1],['1.5.3 two',undefined,2],['1.5.3 three',undefined,3]]){
   const samples=[];let requests=0;
   for(let i=0;i<5;i++){
     const app=nativeRuntime(handler,{path}),start=performance.now();

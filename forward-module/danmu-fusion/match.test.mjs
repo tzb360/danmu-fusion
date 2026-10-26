@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {nativeRuntime} from './native-test-support.mjs';
+import {compatibilityRuntime as nativeRuntime} from './native-test-support.mjs';
 const params={danmu_api_url:'https://api.example/token/api/v2',type:'movie',title:'同名作品',year:2024,season:0,episode:0};
 const catalog=[{animeId:1,animeTitle:'同名作品(1990)',type:'movie'}, {animeId:2,animeTitle:'同名作品(2024)',type:'movie'}, {animeId:3,animeTitle:'同名作品(2024)',type:'movie'}];
 function fixture({animes=catalog,match,fail}={}){

@@ -520,4 +520,4 @@ async function fusionLoad(params,initial) {
   }
 }
 
-async function getDanmuWithSegmentTime(params) { return fusionMultiComments(params || {},true); }
+async function getDanmuWithSegmentTime(params) { return fusionAggregateComments(params || {},true); }

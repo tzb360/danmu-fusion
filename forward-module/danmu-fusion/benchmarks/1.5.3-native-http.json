@@ -1,0 +1,125 @@
+{
+  "startedAt": "2026-10-26T09:26:33.659Z",
+  "cases": [
+    {
+      "title": "爱情公寓4",
+      "type": "tv",
+      "year": 2014,
+      "season": 4,
+      "episode": 8,
+      "status": "passed",
+      "mergedTitle": "【聚合】爱情公寓4(2014)【国产剧】from tencent · 腾讯&爱奇艺&爱一帆",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "children": [
+        "爱情公寓4(2014)【国产剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from aiyifan"
+      ],
+      "episodes": 24,
+      "selectedEpisode": "【聚合】爱情公寓4 第8集 · 腾讯&爱奇艺&爱一帆",
+      "count": 51813,
+      "sourceTags": {
+        "[tencent]": 35605,
+        "[iqiyi]": 16115,
+        "[aiyifan]": 84,
+        "[tencent＆iqiyi]": 8,
+        "[iqiyi＆aiyifan]": 1
+      },
+      "actualSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "seekCount": 1241,
+      "elapsedMs": 19103
+    },
+    {
+      "title": "爱情公寓4",
+      "type": "tv",
+      "year": 2014,
+      "season": 4,
+      "episode": 7,
+      "status": "passed",
+      "mergedTitle": "【聚合】爱情公寓4(2014)【国产剧】from tencent · 腾讯&爱奇艺&爱一帆",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "children": [
+        "爱情公寓4(2014)【国产剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from iqiyi",
+        "爱情公寓4(2014)【电视剧】from aiyifan"
+      ],
+      "episodes": 24,
+      "selectedEpisode": "【聚合】爱情公寓4 第7集 · 腾讯&爱奇艺&爱一帆",
+      "count": 59948,
+      "sourceTags": {
+        "[tencent]": 42668,
+        "[iqiyi]": 17154,
+        "[aiyifan]": 112,
+        "[tencent＆iqiyi]": 13,
+        "[iqiyi＆aiyifan]": 1
+      },
+      "actualSources": [
+        "tencent",
+        "iqiyi",
+        "aiyifan"
+      ],
+      "seekCount": 1175,
+      "elapsedMs": 9697
+    },
+    {
+      "title": "长安三万里",
+      "type": "movie",
+      "year": 2023,
+      "status": "passed",
+      "mergedTitle": "【聚合】腾讯&优酷&爱一帆&爱奇艺 · 长安三万里(2023)【动画电影】from tencent",
+      "candidateSources": [
+        "tencent",
+        "iqiyi",
+        "youku",
+        "aiyifan"
+      ],
+      "children": [
+        "长安三万里(2023)【动画电影】from iqiyi",
+        "长安三万里(2023)【动画电影】from youku",
+        "长安三万里(2023)【电影】from aiyifan"
+      ],
+      "episodes": 1,
+      "selectedEpisode": "【聚合】腾讯&优酷&爱一帆&爱奇艺 · 长安三万里",
+      "count": 320665,
+      "sourceTags": {
+        "[tencent]": 194858,
+        "[youku]": 59442,
+        "[aiyifan]": 4005,
+        "[iqiyi]": 62155,
+        "[tencent＆iqiyi]": 113,
+        "[iqiyi＆youku]": 3,
+        "[tencent＆youku]": 62,
+        "[tencent＆aiyifan]": 22,
+        "[youku＆aiyifan]": 2,
+        "[iqiyi＆aiyifan]": 3
+      },
+      "actualSources": [
+        "tencent",
+        "youku",
+        "aiyifan",
+        "iqiyi"
+      ],
+      "seekCount": 1956,
+      "elapsedMs": 79346
+    }
+  ],
+  "version": "1.5.3",
+  "finishedAt": "2026-10-26T09:41:23.067Z",
+  "totals": {
+    "cases": 3,
+    "passed": 3,
+    "failed": 0
+  }
+}

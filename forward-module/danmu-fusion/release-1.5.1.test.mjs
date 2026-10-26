@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {nativeRuntime,media} from './native-test-support.mjs';
+import {compatibilityRuntime as nativeRuntime,media} from './native-test-support.mjs';
 const config={danmu_api_url:'https://one.example/Private%2FONE?token=SECRET1',danmu_api_url_2:'https://two.example/PrivateTWO?token=SECRET2'};
 const p={...media,...config};
 const hash='a'.repeat(64),tick=()=>new Promise(setImmediate);
